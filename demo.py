@@ -70,10 +70,15 @@ def save_result(result: dict, audio_path: str):
     filename = os.path.splitext(os.path.basename(audio_path))[0]
     output_path = os.path.join("result", f"{filename}_{timestamp}.json")
 
+    volume = dict(result.get("volume", {}))
+    volume_timeline = volume.pop("volume_timeline", [])
+
     data = {
         "audio_file": audio_path,
         "analyzed_at": datetime.now().isoformat(),
-        **result,
+        **{k: v for k, v in result.items() if k != "volume"},
+        "volume": volume,
+        "volume_timeline": volume_timeline,
     }
 
     with open(output_path, "w", encoding="utf-8") as f:

@@ -6,7 +6,7 @@ def count_syllables(text: str) -> int:
 
 
 def transcribe(audio_path: str, model) -> dict:
-    return model.transcribe(audio_path, word_timestamps=True)
+    return model.transcribe(audio_path, language="ko", word_timestamps=True)
 
 
 def detect_silences(segments: list, threshold: float = 3.0) -> list:
@@ -50,8 +50,8 @@ def calculate_speech_rate(transcript: str, duration_sec: float) -> dict:
 
 
 def analyze(audio_path: str, **kwargs) -> dict:
-    print("Loading Whisper base model...")
-    model = whisper.load_model("base")
+    print("Loading Whisper small model...")
+    model = whisper.load_model("small")
 
     result = transcribe(audio_path, model)
     transcript = result["text"].strip()

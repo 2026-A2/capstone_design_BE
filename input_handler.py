@@ -16,20 +16,6 @@ def validate_wav(file_path: str) -> str:
         sys.exit(1)
 
     size_mb = os.path.getsize(file_path) / (1024 * 1024)
-    if size_mb > 25:
-        print(f"[ERROR] File exceeds 25 MB limit (Whisper API max): {size_mb:.1f} MB")
-        sys.exit(1)
-
     print(f"[OK] Input file  : {file_path}")
     print(f"[OK] File size   : {size_mb:.2f} MB")
     return file_path
-
-
-def get_api_key() -> str:
-    key = os.environ.get("OPENAI_API_KEY", "")
-    if not key:
-        print("[ERROR] OPENAI_API_KEY environment variable is not set.")
-        print("        Set it with: $env:OPENAI_API_KEY = 'sk-...'")
-        sys.exit(1)
-    print("[OK] API key     : found")
-    return key

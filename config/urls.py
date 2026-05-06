@@ -23,7 +23,7 @@ from drf_spectacular.views import (SpectacularJSONAPIView, SpectacularYAMLAPIVie
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    # path('api/', include('api.urls')),
+    path('api/', include('api.urls')),
 
     path("json/", SpectacularJSONAPIView.as_view(), name="schema-json"),
     path("yaml/", SpectacularYAMLAPIView.as_view(), name="swagger-yaml"),

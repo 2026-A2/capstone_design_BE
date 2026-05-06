@@ -39,8 +39,23 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
-    'api',
+    # 'api',
+    'drf_spectacular',
+    'behavior',
+  
 ]
+REST_FRAMEWORK = {
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Capstone - Interview Habit Analysis System',
+    'DESCRIPTION': 'API 명세서',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False, 
+
+}
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',

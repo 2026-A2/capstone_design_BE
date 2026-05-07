@@ -6,9 +6,9 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 
-from speech.analyzer import analyze
-from speech.analyzer2 import analyze_volume
-from speech.analyzer3 import detect_fillers
+from speech.transcriber import analyze
+from speech.volume import analyze_volume
+from speech.filler import detect_fillers
 
 AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}

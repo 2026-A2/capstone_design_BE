@@ -3,9 +3,9 @@ import json
 import os
 from datetime import datetime
 from speech.input_handler import validate_wav
-from speech.analyzer import analyze
-from speech.analyzer2 import analyze_volume
-from speech.analyzer3 import detect_fillers
+from speech.transcriber import analyze
+from speech.volume import analyze_volume
+from speech.filler import detect_fillers
 
 
 def print_result(result: dict):

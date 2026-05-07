@@ -1,4 +1,8 @@
 absl-py==2.4.0
+librosa==0.11.0
+openai-whisper==20250625
+soundfile==0.13.1
+torch==2.9.1
 asgiref==3.11.1
 attrs==26.1.0
 cffi==2.0.0

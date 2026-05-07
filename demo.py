@@ -2,10 +2,10 @@ import argparse
 import json
 import os
 from datetime import datetime
-from input_handler import validate_wav
-from analyzer import analyze
-from analyzer2 import analyze_volume
-from analyzer3 import detect_fillers
+from speech.input_handler import validate_wav
+from speech.analyzer import analyze
+from speech.analyzer2 import analyze_volume
+from speech.analyzer3 import detect_fillers
 
 
 def print_result(result: dict):

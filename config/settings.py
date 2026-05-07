@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'api',
     'drf_spectacular',
     'behavior',
+    'speech',
   
 ]
 REST_FRAMEWORK = {

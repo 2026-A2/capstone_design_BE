@@ -169,6 +169,7 @@ cython_debug/
 
 myvenv/
 
+local_settings.py
 
 
 # PyCharm

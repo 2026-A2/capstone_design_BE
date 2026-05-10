@@ -17,17 +17,25 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path, include
-from drf_spectacular.views import (SpectacularJSONAPIView, SpectacularYAMLAPIView, SpectacularSwaggerView, SpectacularRedocView)
+from drf_spectacular.views import (SpectacularAPIView, SpectacularJSONAPIView, SpectacularYAMLAPIView, SpectacularSwaggerView, SpectacularRedocView)
+from django.conf import settings
+from django.conf.urls.static import static
 
 
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include('speech.urls')),
+    # path('api/', include('speech.urls')),
 
     path("json/", SpectacularJSONAPIView.as_view(), name="schema-json"),
     path("yaml/", SpectacularYAMLAPIView.as_view(), name="swagger-yaml"),
     path("swagger/", SpectacularSwaggerView.as_view(url_name="schema-json"), name="swagger-ui"),
     path("redoc/", SpectacularRedocView.as_view(url_name="schema-json"), name="redoc"),
     path('behavior/', include('behavior.urls')),
+    path('interview/', include('interview.urls')),
+
 ]
+
+# 미디어 파일(영상 등) 접근 설정
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

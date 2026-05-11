@@ -9,6 +9,7 @@ from rest_framework import status
 from speech.transcriber import analyze
 from speech.volume import analyze_volume
 from speech.filler import detect_fillers
+from speech.models import SpeechAnalysis, SpeechReport, SpeechSilence, SpeechFiller
 
 AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
@@ -60,8 +61,51 @@ def analyze_audio(request):
         result = analyze(analyze_path)
         segments = result.pop("segments", None)
 
-        result["volume"] = analyze_volume(analyze_path, segments=segments)
-        result["filler"] = detect_fillers(analyze_path)
+        volume = analyze_volume(analyze_path, segments=segments)
+        filler = detect_fillers(analyze_path)
+
+        result["volume"] = volume
+        result["filler"] = filler
+
+        speech_analysis = SpeechAnalysis.objects.create(file_name=audio_file.name)
+
+        SpeechReport.objects.create(
+            analysis=speech_analysis,
+            transcript=result["transcript"],
+            syllable_count=result["syllable_count"],
+            duration_sec=result["duration_sec"],
+            spm=result["spm"],
+            pace=result["pace"],
+            avg_db=volume["avg_db"],
+            max_db=volume["max_db"],
+            min_db=volume["min_db"],
+            std_db=volume["std_db"],
+            volume_level=volume["volume_level"],
+            filler_count=filler["filler_count"],
+            frequent_fillers=filler["frequent_fillers"],
+            volume_timeline=volume["volume_timeline"],
+        )
+
+        SpeechSilence.objects.bulk_create([
+            SpeechSilence(
+                analysis=speech_analysis,
+                start=s["start"],
+                end=s["end"],
+                duration=s["duration"],
+            )
+            for s in result["silences"]
+        ])
+
+        SpeechFiller.objects.bulk_create([
+            SpeechFiller(
+                analysis=speech_analysis,
+                start=f["start"],
+                end=f["end"],
+                duration=f["duration"],
+                filler_type=f["type"],
+            )
+            for f in filler["fillers"]
+        ])
 
         return Response(result)
     except Exception as e:

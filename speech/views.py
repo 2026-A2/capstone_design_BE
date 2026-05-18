@@ -2,14 +2,17 @@ import os
 import tempfile
 
 import ffmpeg
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
+from drf_spectacular.utils import extend_schema
 
 from speech.transcriber import analyze
 from speech.volume import analyze_volume
 from speech.filler import detect_fillers
 from speech.models import SpeechAnalysis, SpeechReport, SpeechSilence, SpeechFiller
+from speech.serializers import AudioUploadSerializer, SpeechAnalysisResponseSerializer
 
 AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
@@ -28,7 +31,15 @@ def extract_audio(video_path: str) -> str:
     return wav_path
 
 
+@extend_schema(
+    summary="음성/영상 분석",
+    description="음성 또는 영상 파일을 업로드하면 STT, 말 속도, 침묵 구간, 습관어, 음량을 분석합니다.",
+    request={'multipart/form-data': AudioUploadSerializer},
+    responses={200: SpeechAnalysisResponseSerializer},
+    tags=['Speech Analysis']
+)
 @api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
 def analyze_audio(request):
     if "audio" not in request.FILES:
         return Response(

@@ -231,11 +231,24 @@ def analyze_session(request, session_id: int):
             avg_silence_duration=summary["avg_silence_duration"],
         )
 
+        individual_filtered = [
+            {
+                "order": r["order"],
+                "file_name": r["file_name"],
+                "transcript": r["transcript"],
+                "silences": r["silences"],
+                "volume_timeline": r["volume"]["volume_timeline"],
+                "trailing_off": r["volume"]["trailing_off"],
+                "fillers": r["filler"]["fillers"],
+            }
+            for r in individual_results
+        ]
+
         return Response({
+            "summary": summary,
             "session_id": session.id,
             "video_count": session.video_count,
-            "individual": individual_results,
-            "summary": summary,
+            "individual": individual_filtered,
         })
 
     except Exception as e:

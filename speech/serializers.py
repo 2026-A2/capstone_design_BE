@@ -1,12 +1,21 @@
 from rest_framework import serializers
 
 
-class VideoUploadSerializer(serializers.Serializer):
+# ── 1단계: 영상 업로드 ──────────────────────────────────────────────
+
+class InterviewUploadSerializer(serializers.Serializer):
     videos = serializers.ListField(
         child=serializers.FileField(),
-        help_text="영상 파일 리스트 (mp4, mov, avi, mkv, webm, wav, mp3, m4a). 2개 이상 업로드 가능.",
+        help_text="면접 영상 파일 리스트 (mp4, mov, avi, mkv, webm, wav, mp3, m4a)",
     )
 
+
+class InterviewUploadResponseSerializer(serializers.Serializer):
+    session_id = serializers.IntegerField(help_text="생성된 세션 ID (분석 요청 시 사용)")
+    video_count = serializers.IntegerField(help_text="업로드된 영상 수")
+
+
+# ── 2단계: 분석 결과 ────────────────────────────────────────────────
 
 class SilenceSerializer(serializers.Serializer):
     start = serializers.FloatField()

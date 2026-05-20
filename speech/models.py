@@ -9,6 +9,17 @@ class SpeechSession(models.Model):
         db_table = "speech_session"
 
 
+class SpeechVideoFile(models.Model):
+    session = models.ForeignKey(SpeechSession, on_delete=models.CASCADE, related_name="video_files")
+    file_name = models.CharField(max_length=255)
+    file_path = models.CharField(max_length=512)
+    order = models.IntegerField()
+
+    class Meta:
+        db_table = "speech_video_file"
+        ordering = ["order"]
+
+
 class SpeechAnalysis(models.Model):
     session = models.ForeignKey(SpeechSession, on_delete=models.CASCADE, related_name="analyses", null=True, blank=True)
     file_name = models.CharField(max_length=255)

@@ -1,8 +1,11 @@
 from rest_framework import serializers
 
 
-class AudioUploadSerializer(serializers.Serializer):
-    audio = serializers.FileField(help_text="음성 또는 영상 파일 (wav, mp3, m4a, mp4, mov, avi, mkv, webm)")
+class VideoUploadSerializer(serializers.Serializer):
+    videos = serializers.ListField(
+        child=serializers.FileField(),
+        help_text="영상 파일 리스트 (mp4, mov, avi, mkv, webm, wav, mp3, m4a). 2개 이상 업로드 가능.",
+    )
 
 
 class SilenceSerializer(serializers.Serializer):
@@ -34,12 +37,35 @@ class VolumeSerializer(serializers.Serializer):
     volume_timeline = serializers.ListField()
 
 
-class SpeechAnalysisResponseSerializer(serializers.Serializer):
+class IndividualAnalysisSerializer(serializers.Serializer):
+    order = serializers.IntegerField(help_text="영상 순서 (1부터 시작)")
+    file_name = serializers.CharField()
     transcript = serializers.CharField()
     syllable_count = serializers.IntegerField()
     duration_sec = serializers.FloatField()
-    spm = serializers.FloatField(help_text="분당 음절 수")
-    pace = serializers.CharField(help_text="말 속도 (느림/보통/빠름/매우 빠름)")
+    spm = serializers.FloatField()
+    pace = serializers.CharField()
     silences = SilenceSerializer(many=True)
     volume = VolumeSerializer()
     filler = FillerSerializer()
+
+
+class SessionSummarySerializer(serializers.Serializer):
+    avg_spm = serializers.FloatField(help_text="전체 가중 평균 말 속도 (음절/분)")
+    pace = serializers.CharField(help_text="평균 말 속도 수준 (느림/보통/빠름/매우 빠름)")
+    avg_db = serializers.FloatField(help_text="전체 평균 음량 (dB)")
+    max_db = serializers.FloatField(help_text="전체 최대 음량 (dB)")
+    min_db = serializers.FloatField(help_text="전체 최소 음량 (dB)")
+    avg_std_db = serializers.FloatField(help_text="음량 표준편차 평균")
+    volume_level = serializers.CharField(help_text="평균 음량 수준")
+    total_filler_count = serializers.IntegerField(help_text="전체 습관어 횟수 합산")
+    frequent_fillers = serializers.ListField(child=serializers.CharField(), help_text="빈도 순 습관어 목록")
+    total_silence_count = serializers.IntegerField(help_text="전체 침묵 구간 수")
+    avg_silence_duration = serializers.FloatField(help_text="침묵 구간 평균 길이 (초)")
+
+
+class SpeechSessionResponseSerializer(serializers.Serializer):
+    session_id = serializers.IntegerField()
+    video_count = serializers.IntegerField()
+    individual = IndividualAnalysisSerializer(many=True)
+    summary = SessionSummarySerializer()

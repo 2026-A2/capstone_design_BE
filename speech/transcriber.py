@@ -1,13 +1,16 @@
+import threading
 from faster_whisper import WhisperModel
 
 _model = None
+_model_lock = threading.Lock()
 
 
 def _get_model() -> WhisperModel:
     global _model
-    if _model is None:
-        print("Loading faster-whisper large-v3-turbo model...")
-        _model = WhisperModel("large-v3-turbo", device="cpu", compute_type="int8")
+    with _model_lock:
+        if _model is None:
+            print("Loading faster-whisper large-v3-turbo model...")
+            _model = WhisperModel("large-v3-turbo", device="cpu", compute_type="int8")
     return _model
 
 

@@ -1,9 +1,7 @@
 import os
 
 import ffmpeg
-from django.conf import settings
-from rest_framework.decorators import api_view, parser_classes
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from drf_spectacular.utils import extend_schema, OpenApiParameter
@@ -13,18 +11,11 @@ from speech.transcriber import analyze
 from speech.volume import analyze_volume
 from speech.filler import detect_fillers
 from speech.aggregator import aggregate_results
-from speech.models import (
-    SpeechAnalysis, SpeechReport, SpeechSilence, SpeechFiller,
-    SpeechSession, SpeechSessionReport, SpeechVideoFile,
-)
-from speech.serializers import (
-    InterviewUploadSerializer, InterviewUploadResponseSerializer,
-    SpeechSessionResponseSerializer,
-)
+from speech.models import SpeechAnalysis, SpeechReport, SpeechSilence, SpeechFiller, SpeechInterviewReport
+from speech.serializers import SpeechSessionResponseSerializer
 
 AUDIO_EXTENSIONS = {".wav", ".m4a", ".mp3"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-SUPPORTED_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 
 
 def _extract_audio(video_path: str) -> str:
@@ -39,8 +30,11 @@ def _extract_audio(video_path: str) -> str:
     return wav_path
 
 
-def _analyze_single(file_path: str, file_name: str, order: int, session: SpeechSession) -> dict:
+def _analyze_single(question) -> dict:
+    file_path = question.video_path.path
+    file_name = os.path.basename(file_path)
     ext = os.path.splitext(file_name)[1].lower()
+
     extracted_path = None
     try:
         if ext in VIDEO_EXTENSIONS:
@@ -58,11 +52,7 @@ def _analyze_single(file_path: str, file_name: str, order: int, session: SpeechS
         result["volume"] = volume
         result["filler"] = filler
 
-        speech_analysis = SpeechAnalysis.objects.create(
-            session=session,
-            file_name=file_name,
-            order=order,
-        )
+        speech_analysis = SpeechAnalysis.objects.create(question=question)
 
         SpeechReport.objects.create(
             analysis=speech_analysis,
@@ -103,7 +93,7 @@ def _analyze_single(file_path: str, file_name: str, order: int, session: SpeechS
         ])
 
         return {
-            "order": order,
+            "order": question.order,
             "file_name": file_name,
             **result,
         }
@@ -113,111 +103,49 @@ def _analyze_single(file_path: str, file_name: str, order: int, session: SpeechS
             os.unlink(extracted_path)
 
 
-# ── 1단계: 면접 영상 업로드 ────────────────────────────────────────
-
 @extend_schema(
-    summary="1단계: 면접 영상 업로드",
-    description=(
-        "면접이 끝난 후 영상 파일 n개를 업로드합니다. "
-        "파일은 서버에 저장되며, 분석은 시작되지 않습니다. "
-        "응답으로 받은 session_id를 분석 요청 시 사용하세요."
-    ),
-    request={'multipart/form-data': InterviewUploadSerializer},
-    responses={201: InterviewUploadResponseSerializer},
-    tags=['Speech Analysis'],
-)
-@api_view(["POST"])
-@parser_classes([MultiPartParser, FormParser])
-def upload_interview(request):
-    video_files = request.FILES.getlist("videos")
-
-    if not video_files:
-        return Response(
-            {"error": "영상/음성 파일을 'videos' 키로 하나 이상 전송해 주세요."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    for f in video_files:
-        ext = os.path.splitext(f.name)[1].lower()
-        if ext not in SUPPORTED_EXTENSIONS:
-            return Response(
-                {"error": f"지원하지 않는 파일 형식입니다: {f.name}. 지원 형식: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-    session = SpeechSession.objects.create(video_count=len(video_files))
-
-    save_dir = os.path.join(settings.MEDIA_ROOT, "interviews", str(session.id))
-    os.makedirs(save_dir, exist_ok=True)
-
-    for order, video_file in enumerate(video_files, start=1):
-        ext = os.path.splitext(video_file.name)[1].lower()
-        save_path = os.path.join(save_dir, f"{order}{ext}")
-        with open(save_path, "wb") as dest:
-            for chunk in video_file.chunks():
-                dest.write(chunk)
-
-        SpeechVideoFile.objects.create(
-            session=session,
-            file_name=video_file.name,
-            file_path=save_path,
-            order=order,
-        )
-
-    return Response(
-        {"session_id": session.id, "video_count": session.video_count},
-        status=status.HTTP_201_CREATED,
-    )
-
-
-# ── 2단계: 분석 시작 ───────────────────────────────────────────────
-
-@extend_schema(
-    summary="2단계: 면접 분석 시작",
+    summary="면접 음성 분석",
     description=(
         "사용자가 '나의 면접 결과 보기'를 클릭하면 호출합니다. "
-        "업로드된 영상을 순서대로 분석하고, 항목별 집계 결과를 반환합니다."
+        "InterviewQuestion에 저장된 영상을 순서대로 분석하고 항목별 집계 결과를 반환합니다."
     ),
     parameters=[
         OpenApiParameter(
-            name="session_id",
+            name="interview_id",
             type=OpenApiTypes.INT,
             location=OpenApiParameter.PATH,
-            description="1단계 업로드에서 받은 session_id",
+            description="분석할 Interview ID",
         )
     ],
     responses={200: SpeechSessionResponseSerializer},
     tags=['Speech Analysis'],
 )
-@api_view(["POST"])
-def analyze_session(request, session_id: int):
+@api_view(["GET"])
+def analyze_interview(request, interview_id: int):
+    from interview.models import Interview
+
     try:
-        session = SpeechSession.objects.get(id=session_id)
-    except SpeechSession.DoesNotExist:
-        return Response({"error": "존재하지 않는 세션입니다."}, status=status.HTTP_404_NOT_FOUND)
+        interview = Interview.objects.get(id=interview_id)
+    except Interview.DoesNotExist:
+        return Response({"error": "존재하지 않는 면접입니다."}, status=status.HTTP_404_NOT_FOUND)
 
-    if hasattr(session, "report"):
-        return Response({"error": "이미 분석이 완료된 세션입니다."}, status=status.HTTP_400_BAD_REQUEST)
+    if hasattr(interview, "speech_report"):
+        return Response({"error": "이미 분석이 완료된 면접입니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-    video_files = session.video_files.all()
-    if not video_files.exists():
-        return Response({"error": "업로드된 영상이 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+    questions = interview.questions.all()
+    if not questions.exists():
+        return Response({"error": "등록된 질문이 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
     individual_results = []
     try:
-        for video_file in video_files:
-            result = _analyze_single(
-                file_path=video_file.file_path,
-                file_name=video_file.file_name,
-                order=video_file.order,
-                session=session,
-            )
+        for question in questions:
+            result = _analyze_single(question)
             individual_results.append(result)
 
         summary = aggregate_results(individual_results)
 
-        SpeechSessionReport.objects.create(
-            session=session,
+        SpeechInterviewReport.objects.create(
+            interview=interview,
             avg_spm=summary["avg_spm"],
             pace=summary["pace"],
             avg_db=summary["avg_db"],
@@ -246,8 +174,8 @@ def analyze_session(request, session_id: int):
 
         return Response({
             "summary": summary,
-            "session_id": session.id,
-            "video_count": session.video_count,
+            "interview_id": interview.id,
+            "video_count": questions.count(),
             "individual": individual_filtered,
         })
 

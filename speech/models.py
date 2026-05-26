@@ -1,29 +1,12 @@
 from django.db import models
 
 
-class SpeechSession(models.Model):
-    created_at = models.DateTimeField(auto_now_add=True)
-    video_count = models.IntegerField()
-
-    class Meta:
-        db_table = "speech_session"
-
-
-class SpeechVideoFile(models.Model):
-    session = models.ForeignKey(SpeechSession, on_delete=models.CASCADE, related_name="video_files")
-    file_name = models.CharField(max_length=255)
-    file_path = models.CharField(max_length=512)
-    order = models.IntegerField()
-
-    class Meta:
-        db_table = "speech_video_file"
-        ordering = ["order"]
-
-
 class SpeechAnalysis(models.Model):
-    session = models.ForeignKey(SpeechSession, on_delete=models.CASCADE, related_name="analyses", null=True, blank=True)
-    file_name = models.CharField(max_length=255)
-    order = models.IntegerField(default=0)
+    question = models.OneToOneField(
+        'interview.InterviewQuestion',
+        on_delete=models.CASCADE,
+        related_name='speech_analysis',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=50, default="completed")
 
@@ -72,8 +55,12 @@ class SpeechFiller(models.Model):
         db_table = "speech_filler"
 
 
-class SpeechSessionReport(models.Model):
-    session = models.OneToOneField(SpeechSession, on_delete=models.CASCADE, related_name="report")
+class SpeechInterviewReport(models.Model):
+    interview = models.OneToOneField(
+        'interview.Interview',
+        on_delete=models.CASCADE,
+        related_name='speech_report',
+    )
     avg_spm = models.FloatField()
     pace = models.CharField(max_length=20)
     avg_db = models.FloatField()
@@ -87,4 +74,4 @@ class SpeechSessionReport(models.Model):
     avg_silence_duration = models.FloatField()
 
     class Meta:
-        db_table = "speech_session_report"
+        db_table = "speech_interview_report"

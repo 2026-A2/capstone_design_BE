@@ -26,7 +26,6 @@ SECRET_KEY = 'django-insecure-)hcvm5#@j-^%^8w=jxtc#3e!q(b3g7u2jszhr1c01!zr*czd5e
 DEBUG = True
 
 ALLOWED_HOSTS = ['*', '127.0.0.1', 'localhost']
-
 CORS_ALLOW_ALL_ORIGINS = True
 
 
@@ -78,8 +77,9 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 # 업로드 파일 임시 저장 경로
-MEDIA_ROOT = BASE_DIR / 'media'
+import os
 MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # 업로드 파일 최대 크기 (100MB)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024
@@ -151,3 +151,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+
+#앱 분리를 위해 - local__settings 파일 
+try:
+    from .local_settings import *
+except ImportError:
+    pass

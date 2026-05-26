@@ -126,6 +126,7 @@ def interview_base_handler(request):
             } for intv in interviews
         ]
         return Response(response_data, status=status.HTTP_200_OK)
+        # return Response([], status=status.HTTP_200_OK)
 
 # ===========================================================================
 # 3. 방금 마친 면접 결과 상세 리포트 조회 (GET)

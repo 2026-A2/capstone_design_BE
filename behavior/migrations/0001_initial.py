@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ("interview", "0001_initial"),
+        ('interview', '0001_initial'),
     ]
 
     operations = [

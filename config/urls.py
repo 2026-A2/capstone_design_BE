@@ -31,8 +31,8 @@ urlpatterns = [
     path("yaml/", SpectacularYAMLAPIView.as_view(), name="swagger-yaml"),
     path("swagger/", SpectacularSwaggerView.as_view(url_name="schema-json"), name="swagger-ui"),
     path("redoc/", SpectacularRedocView.as_view(url_name="schema-json"), name="redoc"),
-    path('behavior/', include('behavior.urls')),
-    path('interview/', include('interview.urls')),
+
+    path('interviews/', include('interview.urls')),
 
 ]
 

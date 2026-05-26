@@ -1,57 +1,46 @@
+# interview/models.py
 from django.db import models
-from django.core.validators import MinValueValidator, MaxValueValidator
 
-#면접 기본 정보 테이블 
 class Interview(models.Model):
     TYPE_CHOICES = [('RESUME', '자소서 기반'), ('JOB', '직무 기반')]
     STATUS_CHOICES = [
-        ('pending', '대기'), 
-        ('processing', '분석중'), 
-        ('completed', '완료'), 
-        ('failed', '실패')
+        ('CREATED', '생성됨'), 
+        ('CALIBRATED', '캘리브레이션 완료'), 
+        ('PROGRESS', '진행중'), 
+        ('ANALYZING', '분석중'), 
+        ('COMPLETED', '완료'), 
+        ('FAILED', '실패')
     ]
-
-    #면접 회차별 식별 제목
-    title = models.CharField(max_length = 200)
     interview_type = models.CharField(max_length=10, choices=TYPE_CHOICES)
-    #질문 개수 
-    question_count = models.IntegerField(
-        validators=[MinValueValidator(2), MaxValueValidator(5)], help_text="사용자가 설정한 질문 개수")
-    
-    #자소서 혹은 직무 - 둘 중 하나만 들어올 수 있음 (null=True)
-    cover_letter = models.TextField(null = True, blank = True)
-    job_group = models.CharField(max_length = 100, null = True, blank = True)
-    #면접 실시 시간 
-    created_at = models.DateTimeField(auto_now_add = True)
-
-    # 전체 프로세스 상태 - 기본값 (pending)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    question_count = models.IntegerField()
+    resume_text = models.TextField(null=True, blank=True)
+    job_category = models.CharField(max_length=100, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='CREATED')
+    calibration_config = models.JSONField(null=True, blank=True, help_text="초기 캘리브레이션 기준값")
 
     def __str__(self):
-        return f"[{self.id}] {self.title}"
+        return f"[{self.id}] {self.interview_type} - {self.status}"
 
 
- #AI가 생성한 질문들을 저장 (질문당 영상 저장됨)
 class InterviewQuestion(models.Model):
-        
-    STATUS_CHOICES = [
-        ('pending', '대기'), 
-        ('processing', '분석중'), 
-        ('completed', '완료'), 
-        ('failed', '실패')
-    ]
+    STATUS_CHOICES = [('PENDING', '대기'), ('ANALYZING', '분석중'), ('COMPLETED', '완료'), ('FAILED', '실패')]
     interview = models.ForeignKey(Interview, on_delete=models.CASCADE, related_name='questions')
-    question_text = models.CharField(max_length=500, help_text="AI가 생성한 질문 내용")
-    order = models.IntegerField(help_text="질문 순서 (1번 질문, 2번 질문...)")
-
-    # 질문당 영상이 생성되므로 여기에 저장 (질문마다 영상이 생성되는 구조 반영)
+    question_text = models.CharField(max_length=500)
+    order = models.IntegerField()
     video_path = models.FileField(upload_to='videos/%Y/%m/%d/', null=True, blank=True)
-    # 개별 질문 분석 상태 (질문 1은 완료, 질문 2는 분석 중... 일 수 있음)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    video_duration = models.FloatField(default=0.0)  # 분당 계산을 위해 영상 길이(초) 필수 저장
+
+    # ================= [딱 필요한 6가지 핵심 지표 (행동)] =================
+    gaze_front_ratio = models.FloatField(default=0.0)      # 1. 정면 응시율 (%)
+    gaze_deviation_ratio = models.FloatField(default=0.0)  # 2. 시선 이탈률 (%)
+    body_sway_count = models.IntegerField(default=0)       # 3. 몸 흔들림 총 횟수 (원천 데이터)
+    shoulder_stability_ratio = models.FloatField(default=0.0)# 4. 어깨 안정도 (%)
+    blink_count = models.IntegerField(default=0)           # 5. 눈 깜빡임 총 횟수 (원천 데이터)
+    nod_count = models.IntegerField(default=0)             # 6. 고개 끄덕임 총 횟수 (원천 데이터)
+    smile_ratio = models.FloatField(default=0.0)           # 7. 미소율 (%)
 
     class Meta:
         ordering = ['order']
-
-    def __str__(self):
-        return f"{self.interview.title} - Q{self.order}: {self.question_text[:20]}..."
-
+        unique_together = ('interview', 'order')

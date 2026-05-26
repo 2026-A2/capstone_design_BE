@@ -3,165 +3,198 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.shortcuts import get_object_or_404
+from django.db.models import Avg, Sum
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
-from drf_spectacular.utils import extend_schema, OpenApiExample # OpenApiExample 누락 해결
+from drf_spectacular.utils import extend_schema, OpenApiExample
 
 from interview.models import Interview, InterviewQuestion
-from .models import BehaviorReport # 모델 임포트 누락 해결
-from .serializers import (
-    VideoUploadSerializer, 
-    BehaviorReportSerializer, 
-    CumulativeReportSerializer
-) 
-from .analysis_logic import analyze_behavior_video
 from .models import BehaviorDetail
+from .analysis_logic import analyze_behavior_video
 
-# [2.1] 답변 영상 및 질문 등록
-@extend_schema(
-    summary="[2.1] 답변 영상 및 질문 등록",
-    description="영상 파일은 로컬 'media/videos/' 폴더에 저장되고, 질문 텍스트는 DB에 저장됩니다.",
-    request={
-        'multipart/form-data': VideoUploadSerializer, # Swagger 파일 업로드 버튼 활성화
-    },
-    tags=['2. Analysis Flow']
+# 캘리브레이션 시리얼라이저는 임포트에서 제거!
+from .serializers import (
+    VideoUploadSerializer,
+    VideoUploadResponseSerializer,
+    CumulativeTrendsResponseSerializer
 )
-# behavior/views.py
 
-@api_view(['POST'])
-@parser_classes([MultiPartParser, FormParser])
-def process_video_analysis(request, interview_id, order):
-    interview = get_object_or_404(Interview, id=interview_id)
-    video_file = request.FILES.get('video_file')
-    question_text = request.data.get('question_text')
-
-    if not video_file or not question_text:
-        return Response({"error": "데이터 누락"}, status=400)
-
-    # 1. 파일 저장
-    ext = os.path.splitext(video_file.name)[1]
-    new_filename = f"intv_{interview_id}_{order}{ext}"
-    save_path = os.path.join('videos', new_filename)
-
-    video_file.seek(0)
-    if default_storage.exists(save_path):
-        default_storage.delete(save_path)
-    
-    # 파일을 물리적으로 저장
-    saved_file_name = default_storage.save(save_path, ContentFile(video_file.read()))
-    # 분석을 위해 실제 물리 서버 경로(C:/... 또는 /Users/...)를 가져옴
-    full_video_path = os.path.join(settings.MEDIA_ROOT, saved_file_name)
-
-    # 2. 질문 데이터 DB 저장
-    question_obj, created = InterviewQuestion.objects.update_or_create(
-        interview=interview,
-        order=order,
-        defaults={'question_text': question_text}
-    )
-
-    # --- [핵심] 분석 엔진 가동 ---
-    # 이 줄이 빠지면 frame_details가 정의되지 않아 에러가 납니다.
-    frame_details, summary = analyze_behavior_video(full_video_path)
-
-    # 3. 분석 결과(상세 데이터)를 DB에 대량 저장
-    details_to_create = [
-        BehaviorDetail(
-            question=question_obj,
-            timestamp=d['timestamp'],
-            gaze_x=d.get('gaze_x', 0),
-            gaze_y=d.get('gaze_y', 0),
-            head_yaw=d.get('head_yaw', 0),
-            head_pitch=d.get('head_pitch', 0),
-            head_roll=d.get('head_roll', 0),
-            shoulder_tilt=d.get('shoulder_tilt', 0),
-            shoulder_width=d.get('shoulder_width', 0),
-            center_x=d.get('center_x', 0),
-            is_smiling=d.get('is_smiling', False),
-            is_blink=d.get('is_blink', False),
-            is_swaying=d.get('is_swaying', False),
-            gaze_direction=d.get('gaze_direction', 'center')
-        ) for d in frame_details
-    ]
-    BehaviorDetail.objects.bulk_create(details_to_create)
-
-    # 4. 자동 상태 변경
-    actual_question_count = interview.questions.count()
-    is_completed = False
-    if actual_question_count >= interview.question_count:
-        interview.status = 'completed'
-        interview.save()
-        is_completed = True
-
-    return Response({
-        "message": f"{order}번 질문 분석 및 저장 완료",
-        "current_order": order,
-        "is_completed": is_completed
-    }, status=status.HTTP_202_ACCEPTED)
-
-
-
-# [3.1] 개별 리포트 상세 조회
+# ===========================================================================
+# [2번 API] 질문별 답변 영상 업로드 및 분석 요청 (POST)
+# Endpoint: /interviews/<int:interview_id>/questions/
+# ===========================================================================
 @extend_schema(
-    summary="[3.1] 개별 리포트 상세 조회",
-    responses={200: BehaviorReportSerializer},
+    summary="[2] 질문별 답변 영상 업로드 및 분석 요청",
+    description="각 질문 응답 영상을 전송받아 실시간 프레임 및 통계를 저장합니다.",
+    request=VideoUploadSerializer,                 
+    responses={202: VideoUploadResponseSerializer},
     examples=[
         OpenApiExample(
-            '상세 리포트 응답 예시',
+            '2. 질문 업로드 Response 예시',
             value={
-                "status": "success",
                 "interview_id": 1,
-                "questions": [
-                    {"order": 1, "text": "지원동기를 말씀해주세요."},
-                    {"order": 2, "text": "본인의 장점은 무엇인가요?"}
-                ],
-                "report": {
-                    "focus_rate": 85.5,
-                    "left_gaze_rate": 7.2,
-                    "right_gaze_rate": 7.3,
-                    "blinks_per_min": 12.0,
-                    "nod_count": 5,
-                    "shoulder_stability": 92.0,
-                    "lr_sway_count": 2,
-                    "fb_sway_count": 1,
-                    "total_smile_rate": 45.0,
-                    "start_smile_status": True,
-                    "end_smile_status": True,
-                    "overall_score": 88
-                }
+                "question_order": 1,
+                "status": "ANALYZING",
+                "message": "Video uploaded successfully. Analysis started."
+            },
+            response_only=True,
+            status_codes=['202'] # 🌟 Swagger 0 뭉개짐 방지 매핑
+        )
+    ],
+    tags=['1. Interviews']
+)
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+def process_video_analysis(request, interview_id):
+    interview = get_object_or_404(Interview, id=interview_id)
+    if not interview.calibration_config:
+        return Response({"error": "캘리브레이션(초기 세팅)이 완료되지 않은 세션입니다."}, status=400)
+
+    video_file = request.FILES.get('video_file')
+    question_order = request.data.get('question_order')
+    question_text = request.data.get('question_text')
+
+    if not video_file or not question_order or not question_text:
+        return Response({"error": "필수 데이터 누락"}, status=400)
+
+    order = int(question_order)
+
+    ext = os.path.splitext(video_file.name)[1]
+    saved_file_name = default_storage.save(f"videos/intv_{interview_id}_{order}{ext}", ContentFile(video_file.read()))
+    full_video_path = os.path.join(settings.MEDIA_ROOT, saved_file_name)
+
+    question_obj, _ = InterviewQuestion.objects.update_or_create(
+        interview=interview, order=order,
+        defaults={'question_text': question_text, 'video_path': saved_file_name, 'status': 'ANALYZING'}
+    )
+
+    try:
+        frame_details, summary = analyze_behavior_video(full_video_path, config=interview.calibration_config)
+
+        details_to_create = [
+            BehaviorDetail(
+                question=question_obj,
+                timestamp=d['timestamp'],
+                gaze_direction=d.get('gaze_direction', 'center'),
+                is_swaying=d.get('is_swaying', False),
+                is_blink=d.get('is_blink', False),
+                is_nodding=d.get('is_nodding', False),
+                is_smiling=d.get('is_smiling', False),
+                shoulder_stable_frame=d.get('shoulder_stable', True)
+            ) for d in frame_details
+        ]
+        BehaviorDetail.objects.bulk_create(details_to_create)
+
+        duration_sec = len(frame_details) * 0.2  
+        
+        question_obj.gaze_front_ratio = summary.get('focus_rate', 0.0)
+        question_obj.gaze_deviation_ratio = summary.get('deviated_gaze_rate', 0.0)
+        question_obj.body_sway_count = summary.get('lr_sway_count', 0)
+        question_obj.shoulder_stability_ratio = summary.get('shoulder_stability', 100.0)
+        
+        raw_blink_pm = summary.get('blinks_per_min')
+        question_obj.blink_count = int(raw_blink_pm * (duration_sec / 60)) if raw_blink_pm is not None else 0
+        
+        question_obj.nod_count = summary.get('nod_count', 0)
+        question_obj.smile_ratio = summary.get('total_smile_rate', 0.0)
+        question_obj.video_duration = duration_sec
+        question_obj.status = 'COMPLETED'
+        question_obj.save()
+
+        if interview.questions.filter(status='COMPLETED').count() >= interview.question_count:
+            interview.status = 'COMPLETED'
+            interview.save()
+
+        # 응답 구조 명세화하여 리턴
+        out_data = {
+            "interview_id": interview.id,
+            "question_order": order,
+            "status": "ANALYZING",
+            "message": "Video uploaded successfully. Analysis started."
+        }
+        return Response(out_data, status=status.HTTP_202_ACCEPTED)
+
+    except Exception as e:
+        question_obj.status = 'FAILED'
+        question_obj.save()
+        return Response({"error": f"분석 실패: {str(e)}"}, status=500)
+
+
+# ===========================================================================
+# [5번 API] 회차별 변화 트렌드 데이터 조회 (GET)
+# Endpoint: /interviews/trends/
+# ===========================================================================
+@extend_schema(
+    summary="[5] 회차별 변화 트렌드 데이터 조회",
+    description="도표/그래프를 그리기 위해 과거 역대 면접들의 핵심 분석 수치들을 시간 순서대로 반환합니다.",
+    responses={200: CumulativeTrendsResponseSerializer},
+    examples=[
+        OpenApiExample(
+            '5. 시계열 변화 트렌드 Response 예시',
+            value={
+                "total_interview_count": 2,
+                "trends": [
+                    {
+                        "interview_id": 1,
+                        "date": "2026-05-20",
+                        "interview_type": "JOB",
+                        "gaze_front_ratio": 72.1,
+                        "body_sway_per_min": 5.4,
+                        "blink_per_min": 22.1,
+                        "smile_ratio": 5.0
+                    },
+                    {
+                        "interview_id": 2,
+                        "date": "2026-05-25",
+                        "interview_type": "RESUME",
+                        "gaze_front_ratio": 85.5,
+                        "body_sway_per_min": 2.3,
+                        "blink_per_min": 15.2,
+                        "smile_ratio": 12.5
+                    }
+                ]
             },
             response_only=True
         )
     ],
-    tags=['3. Report Flow']
+    tags=['1. Interviews']
 )
 @api_view(['GET'])
-def get_individual_report(request, interview_id):
-    interview = get_object_or_404(Interview, id=interview_id)
-    report = get_object_or_404(BehaviorReport, interview=interview)
+def get_interview_trends(request):
+    completed_interviews = Interview.objects.filter(status='COMPLETED').order_by('created_at')
     
-    # DB에 저장된 질문들 가져오기
-    questions = interview.questions.all().order_by('order')
-    question_data = [{"order": q.order, "text": q.question_text} for q in questions]
-
+    trends_list = []
+    
+    for intv in completed_interviews:
+        questions = intv.questions.filter(status='COMPLETED')
+        if not questions.exists():
+            continue
+            
+        total_duration = questions.aggregate(Sum('video_duration'))['video_duration__sum'] or 0.0
+        total_duration_min = total_duration / 60 if total_duration > 0 else 1.0
+        
+        avg_gaze_front = questions.aggregate(Avg('gaze_front_ratio'))['gaze_front_ratio__avg'] or 0.0
+        avg_smile = questions.aggregate(Avg('smile_ratio'))['smile_ratio__avg'] or 0.0
+        
+        total_sways = questions.aggregate(Sum('body_sway_count'))['body_sway_count__sum'] or 0
+        total_blinks = questions.aggregate(Sum('blink_count'))['blink_count__sum'] or 0
+        
+        body_sway_per_min = total_sways / total_duration_min
+        blink_per_min = total_blinks / total_duration_min
+        
+        trends_list.append({
+            "interview_id": intv.id,
+            "date": intv.created_at.strftime("%Y-%m-%d"),
+            "interview_type": intv.interview_type,
+            "gaze_front_ratio": round(avg_gaze_front, 1),
+            "body_sway_per_min": round(body_sway_per_min, 1),
+            "blink_per_min": round(blink_per_min, 1),
+            "smile_ratio": round(avg_smile, 1)
+        })
+        
     return Response({
-        "status": "success",
-        "interview_id": interview.id,
-        "questions": question_data,
-        "report": BehaviorReportSerializer(report).data
+        "total_interview_count": len(trends_list),
+        "trends": trends_list
     }, status=status.HTTP_200_OK)
-
-
-# [3.2] 누적 점수 추이 조회
-@extend_schema(
-    summary="[3.2] 누적 점수 추이 조회",
-    responses={200: CumulativeReportSerializer(many=True)},
-    tags=['3. Report Flow']
-)
-@api_view(['GET'])
-def get_cumulative_report(request):
-    # interview 모델의 created_at을 참조하여 정렬
-    reports = BehaviorReport.objects.select_related('interview').order_by('interview__created_at')
-    serializer = CumulativeReportSerializer(reports, many=True)
-    return Response(serializer.data, status=status.HTTP_200_OK)

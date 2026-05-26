@@ -13,8 +13,9 @@ from drf_spectacular.utils import extend_schema, OpenApiExample
 from interview.models import Interview, InterviewQuestion
 from .models import BehaviorDetail
 from .analysis_logic import analyze_behavior_video
+from speech.analyzer import analyze_question
+from speech.aggregator import create_speech_interview_report
 
-# 캘리브레이션 시리얼라이저는 임포트에서 제거!
 from .serializers import (
     VideoUploadSerializer,
     VideoUploadResponseSerializer,
@@ -103,9 +104,19 @@ def process_video_analysis(request, interview_id):
         question_obj.status = 'COMPLETED'
         question_obj.save()
 
-        if interview.questions.filter(status='COMPLETED').count() >= interview.question_count:
+        try:
+            analyze_question(question_obj)
+        except Exception as e:
+            print(f"[Speech] 음성 분석 실패 (question {order}): {e}")
+
+        all_completed = interview.questions.filter(status='COMPLETED').count() >= interview.question_count
+        if all_completed:
             interview.status = 'COMPLETED'
             interview.save()
+            try:
+                create_speech_interview_report(interview)
+            except Exception as e:
+                print(f"[Speech] 인터뷰 집계 리포트 생성 실패: {e}")
 
         # 응답 구조 명세화하여 리턴
         out_data = {

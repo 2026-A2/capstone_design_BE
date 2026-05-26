@@ -156,7 +156,14 @@ def interview_base_handler(request):
                         "smile_ratio": 12.5
                     },
                     "speech": {
-                        "comment": "추후 음성 분석 결과 필드 추가 예정 영역"
+                        "avg_spm": 312.4,
+                        "pace": "보통",
+                        "avg_db": -18.3,
+                        "volume_level": "보통",
+                        "total_filler_count": 7,
+                        "frequent_fillers": ["어", "음", "그"],
+                        "total_silence_count": 3,
+                        "avg_silence_duration": 4.2
                     }
                 }
             },
@@ -192,6 +199,20 @@ def get_final_report(request, interview_id):
     blink_per_min = total_blinks / total_duration_min
     nod_per_min = total_nods / total_duration_min
 
+    speech_data = {}
+    if hasattr(interview, 'speech_report'):
+        sr = interview.speech_report
+        speech_data = {
+            "avg_spm": sr.avg_spm,
+            "pace": sr.pace,
+            "avg_db": sr.avg_db,
+            "volume_level": sr.volume_level,
+            "total_filler_count": sr.total_filler_count,
+            "frequent_fillers": sr.frequent_fillers,
+            "total_silence_count": sr.total_silence_count,
+            "avg_silence_duration": sr.avg_silence_duration,
+        }
+
     return Response({
         "interview_id": interview.id,
         "interview_type": interview.interview_type,
@@ -209,8 +230,6 @@ def get_final_report(request, interview_id):
                 "nod_per_min": round(nod_per_min, 1),
                 "smile_ratio": round(avg_smile, 1)
             },
-            "speech": {
-                "comment": "추후 음성 분석 결과 필드 추가 예정 영역"
-            }
+            "speech": speech_data,
         }
     }, status=status.HTTP_200_OK)

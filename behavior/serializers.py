@@ -46,9 +46,18 @@ class CumulativeTrendElementSerializer(serializers.Serializer):
     date = serializers.CharField(help_text="면접 실시 날짜 (YYYY-MM-DD)")
     interview_type = serializers.CharField(help_text="면접 유형 (RESUME / JOB)")
     gaze_front_ratio = serializers.FloatField(help_text="정면 응시율 (%)")
+    gaze_deviation_ratio = serializers.FloatField(help_text="시선 이탈률 (%)")
     body_sway_per_min = serializers.FloatField(help_text="분당 몸 흔들림 횟수")
+    shoulder_stability = serializers.FloatField(help_text="어깨 안정성 (%)")
     blink_per_min = serializers.FloatField(help_text="분당 눈 깜빡임 횟수")
+    nod_per_min = serializers.FloatField(help_text="분당 고개 끄덕임 횟수")
     smile_ratio = serializers.FloatField(help_text="미소율 (%)")
+    avg_spm = serializers.FloatField(required=False, help_text="평균 말하기 속도 (음절/분)")
+    pace = serializers.CharField(required=False, help_text="말하기 속도 레벨 (빠름/보통/느림)")
+    avg_db = serializers.FloatField(required=False, help_text="평균 음량 (dB)")
+    volume_level = serializers.CharField(required=False, help_text="음량 레벨 (크다/보통/작다)")
+    total_filler_count = serializers.IntegerField(required=False, help_text="전체 필러 횟수")
+    total_silence_count = serializers.IntegerField(required=False, help_text="침묵 횟수")
 
 # [5번 API 최종 응답 구조]
 class CumulativeTrendsResponseSerializer(serializers.Serializer):

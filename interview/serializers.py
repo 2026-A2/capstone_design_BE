@@ -72,7 +72,14 @@ class ReportBehaviorSerializer(serializers.Serializer):
     smile_ratio = serializers.FloatField(help_text="미소율 (%)")
 
 class ReportSpeechSerializer(serializers.Serializer):
-    comment = serializers.CharField(help_text="음성 분석 총평 문구")
+    avg_spm = serializers.FloatField(help_text="평균 말하기 속도 (음절/분)")
+    pace = serializers.CharField(help_text="말하기 속도 레벨 (빠름/보통/느림)")
+    avg_db = serializers.FloatField(help_text="평균 음량 (dB)")
+    volume_level = serializers.CharField(help_text="음량 레벨 (크다/보통/작다)")
+    total_filler_count = serializers.IntegerField(help_text="전체 필러 횟수")
+    frequent_fillers = serializers.ListField(child=serializers.CharField(), help_text="자주 사용한 필러 단어 목록")
+    total_silence_count = serializers.IntegerField(help_text="침묵 횟수")
+    avg_silence_duration = serializers.FloatField(help_text="평균 침묵 지속 시간 (초)")
 
 class FinalAnalysisResultSerializer(serializers.Serializer):
     behavior = ReportBehaviorSerializer()
@@ -87,3 +94,28 @@ class FinalReportSerializer(serializers.Serializer):
     total_video_duration = serializers.IntegerField(help_text="전체 영상 시간 (초 단위)")
     created_at = serializers.CharField(help_text="면접 일시 (ISO 포맷팅)")
     analysis_result = FinalAnalysisResultSerializer()
+
+# [5번 API 최종 응답 구조]
+class TrendItemSerializer(serializers.Serializer):
+
+    interview_id = serializers.IntegerField()
+    date = serializers.CharField()
+    interview_type = serializers.CharField()
+    gaze_front_ratio = serializers.FloatField()
+    gaze_deviation_ratio = serializers.FloatField()
+    body_sway_per_min = serializers.FloatField()
+    shoulder_stability = serializers.FloatField()
+    blink_per_min = serializers.FloatField()
+    nod_per_min = serializers.FloatField()
+    smile_ratio = serializers.FloatField()
+    avg_spm = serializers.FloatField(required=False, help_text="평균 말하기 속도 (음절/분)")
+    pace = serializers.CharField(required=False, help_text="말하기 속도 레벨 (빠름/보통/느림)")
+    avg_db = serializers.FloatField(required=False, help_text="평균 음량 (dB)")
+    volume_level = serializers.CharField(required=False, help_text="음량 레벨 (크다/보통/작다)")
+    total_filler_count = serializers.IntegerField(required=False, help_text="전체 필러 횟수")
+    total_silence_count = serializers.IntegerField(required=False, help_text="침묵 횟수")
+
+
+class CumulativeTrendsResponseSerializer(serializers.Serializer):
+    total_interview_count = serializers.IntegerField()
+    trends = TrendItemSerializer(many=True)

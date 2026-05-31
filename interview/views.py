@@ -215,7 +215,11 @@ def interview_base_handler(request):
                         "frequent_fillers": ["어", "음", "그"],
                         "total_silence_count": 3,
                         "avg_silence_duration": 4.2,
-                        "transcript": "안녕하세요 저는 백엔드 개발자 지망생입니다.\n저의 강점은 문제 해결 능력이라고 생각합니다."
+                        "transcript": {
+                            1: "안녕하세요 저는 백엔드 개발자 지망생입니다.",
+                            2: "안녕하세요 저는 그 문제에 대해선 이렇게 생각합니다.",
+                            3: "그 사건에 대한 제 생각은 이러이러합니다."
+                        }
                     }
                 }
             },
@@ -261,10 +265,10 @@ def get_final_report(request, interview_id):
     speech_data = {}
     if hasattr(interview, 'speech_report'):
         sr = interview.speech_report
-        transcripts = []
+        transcripts = {}
         for q in completed_questions:
             try:
-                transcripts.append(q.speech_analysis.report.transcript)
+                transcripts[q.order] = q.speech_analysis.report.transcript
             except Exception:
                 pass
         speech_data = {
@@ -276,7 +280,7 @@ def get_final_report(request, interview_id):
             "frequent_fillers": sr.frequent_fillers,
             "total_silence_count": sr.total_silence_count,
             "avg_silence_duration": sr.avg_silence_duration,
-            "transcript": "\n".join(transcripts),
+            "transcript": transcripts,
         }
 
     return Response({

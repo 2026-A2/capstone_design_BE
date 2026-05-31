@@ -108,7 +108,7 @@ class ReportSpeechSerializer(serializers.Serializer):
     frequent_fillers = serializers.ListField(child=serializers.CharField(), help_text="자주 사용한 필러 단어 목록")
     total_silence_count = serializers.IntegerField(help_text="침묵 횟수")
     avg_silence_duration = serializers.FloatField(help_text="평균 침묵 지속 시간 (초)")
-    transcript = serializers.CharField(help_text="전체 답변 스크립트 (질문별 줄바꿈 구분)")
+    transcript = serializers.DictField(child=serializers.CharField(), help_text="질문별 답변 스크립트 (key: 질문 순서)")
 
 class FinalAnalysisResultSerializer(serializers.Serializer):
     behavior = ReportBehaviorSerializer()

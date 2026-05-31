@@ -1,9 +1,12 @@
-import os,cv2
+import os
+import cv2
+import threading
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.shortcuts import get_object_or_404
 from django.db.models import Avg, Sum
+from django.db import connection
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.response import Response
@@ -13,14 +16,71 @@ from drf_spectacular.utils import extend_schema, OpenApiExample
 from interview.models import Interview, InterviewQuestion
 from .models import BehaviorDetail
 from .analysis_logic import analyze_behavior_video
-# from speech.analyzer import analyze_question
-# from speech.aggregator import create_speech_interview_report
+from speech.analyzer import analyze_question
+from speech.aggregator import create_speech_interview_report
 
 from .serializers import (
     VideoUploadSerializer,
     VideoUploadResponseSerializer,
     CumulativeTrendsResponseSerializer
 )
+
+
+def _run_analysis(question_obj, full_video_path, interview_id, calibration_config, order):
+    try:
+        frame_details, summary = analyze_behavior_video(full_video_path, config=calibration_config)
+
+        details_to_create = [
+            BehaviorDetail(
+                question=question_obj,
+                timestamp=d['timestamp'],
+                gaze_direction=d.get('gaze_direction', 'center'),
+                is_swaying=d.get('is_swaying', False),
+                is_blink=d.get('is_blink', False),
+                is_nodding=d.get('is_nodding', False),
+                is_smiling=d.get('is_smiling', False),
+                shoulder_stable_frame=d.get('shoulder_stable', True)
+            ) for d in frame_details
+        ]
+        BehaviorDetail.objects.bulk_create(details_to_create)
+
+        duration_sec = summary.get('duration_sec', 0.0)
+
+        question_obj.gaze_front_ratio = summary.get('focus_rate', 0.0)
+        question_obj.gaze_deviation_ratio = summary.get('deviated_gaze_rate', 0.0)
+        question_obj.body_sway_count = summary.get('lr_sway_count', 0)
+        question_obj.shoulder_stability_ratio = summary.get('shoulder_stability', 100.0)
+
+        raw_blink_pm = summary.get('blinks_per_min')
+        question_obj.blink_count = int(raw_blink_pm * (duration_sec / 60)) if raw_blink_pm is not None else 0
+
+        question_obj.nod_count = summary.get('nod_count', 0)
+        question_obj.smile_ratio = summary.get('total_smile_rate', 0.0)
+        question_obj.video_duration = duration_sec
+        question_obj.status = 'COMPLETED'
+        question_obj.save()
+
+        try:
+            analyze_question(question_obj)
+        except Exception as e:
+            print(f"[Speech] 음성 분석 실패 (question {order}): {e}")
+
+        interview = Interview.objects.get(id=interview_id)
+        all_completed = interview.questions.filter(status='COMPLETED').count() >= interview.question_count
+        if all_completed:
+            interview.status = 'COMPLETED'
+            interview.save()
+            try:
+                create_speech_interview_report(interview)
+            except Exception as e:
+                print(f"[Speech] 인터뷰 집계 리포트 생성 실패: {e}")
+
+    except Exception as e:
+        print(f"[Analysis] 분석 실패 (question {order}): {e}")
+        question_obj.status = 'FAILED'
+        question_obj.save()
+    finally:
+        connection.close()
 
 # ===========================================================================
 # [2번 API] 질문별 답변 영상 업로드 및 분석 요청 (POST)
@@ -71,66 +131,19 @@ def process_video_analysis(request, interview_id):
         defaults={'question_text': question_text, 'video_path': saved_file_name, 'status': 'ANALYZING'}
     )
 
-    try:
-        frame_details, summary = analyze_behavior_video(full_video_path, config=interview.calibration_config)
+    thread = threading.Thread(
+        target=_run_analysis,
+        args=(question_obj, full_video_path, interview.id, interview.calibration_config, order),
+        daemon=True
+    )
+    thread.start()
 
-        details_to_create = [
-            BehaviorDetail(
-                question=question_obj,
-                timestamp=d['timestamp'],
-                gaze_direction=d.get('gaze_direction', 'center'),
-                is_swaying=d.get('is_swaying', False),
-                is_blink=d.get('is_blink', False),
-                is_nodding=d.get('is_nodding', False),
-                is_smiling=d.get('is_smiling', False),
-                shoulder_stable_frame=d.get('shoulder_stable', True)
-            ) for d in frame_details
-        ]
-        BehaviorDetail.objects.bulk_create(details_to_create)
-
-        duration_sec = summary.get('duration_sec', 0.0)
-        
-        question_obj.gaze_front_ratio = summary.get('focus_rate', 0.0)
-        question_obj.gaze_deviation_ratio = summary.get('deviated_gaze_rate', 0.0)
-        question_obj.body_sway_count = summary.get('lr_sway_count', 0)
-        question_obj.shoulder_stability_ratio = summary.get('shoulder_stability', 100.0)
-        
-        raw_blink_pm = summary.get('blinks_per_min')
-        question_obj.blink_count = int(raw_blink_pm * (duration_sec / 60)) if raw_blink_pm is not None else 0
-        
-        question_obj.nod_count = summary.get('nod_count', 0)
-        question_obj.smile_ratio = summary.get('total_smile_rate', 0.0)
-        question_obj.video_duration = duration_sec
-        question_obj.status = 'COMPLETED'
-        question_obj.save()
-
-        try:
-            analyze_question(question_obj)
-        except Exception as e:
-            print(f"[Speech] 음성 분석 실패 (question {order}): {e}")
-
-        all_completed = interview.questions.filter(status='COMPLETED').count() >= interview.question_count
-        if all_completed:
-            interview.status = 'COMPLETED'
-            interview.save()
-            try:
-                create_speech_interview_report(interview)
-            except Exception as e:
-                print(f"[Speech] 인터뷰 집계 리포트 생성 실패: {e}")
-
-        # 응답 구조 명세화하여 리턴
-        out_data = {
-            "interview_id": interview.id,
-            "question_order": order,
-            "status": "ANALYZING",
-            "message": "Video uploaded successfully. Analysis started."
-        }
-        return Response(out_data, status=status.HTTP_202_ACCEPTED)
-
-    except Exception as e:
-        question_obj.status = 'FAILED'
-        question_obj.save()
-        return Response({"error": f"분석 실패: {str(e)}"}, status=500)
+    return Response({
+        "interview_id": interview.id,
+        "question_order": order,
+        "status": "ANALYZING",
+        "message": "Video uploaded successfully. Analysis started."
+    }, status=status.HTTP_202_ACCEPTED)
 
 
 # ===========================================================================

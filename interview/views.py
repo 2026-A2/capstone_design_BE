@@ -224,11 +224,18 @@ def interview_base_handler(request):
     ],
     tags=['1. Interviews']
 )
-@api_view(['GET']) 
+@api_view(['GET'])
 def get_final_report(request, interview_id):
     interview = get_object_or_404(Interview, id=interview_id)
+
+    if interview.status != 'COMPLETED':
+        return Response({
+            "status": "pending",
+            "message": "분석이 아직 진행 중입니다. 잠시 후 다시 요청해주세요."
+        }, status=status.HTTP_202_ACCEPTED)
+
     completed_questions = interview.questions.filter(status='COMPLETED')
-    
+
     if not completed_questions.exists():
         return Response({
             "status": "not_found",

@@ -216,9 +216,9 @@ def interview_base_handler(request):
                         "total_silence_count": 3,
                         "avg_silence_duration": 4.2,
                         "transcript": {
-                            1: "안녕하세요 저는 백엔드 개발자 지망생입니다.",
-                            2: "안녕하세요 저는 그 문제에 대해선 이렇게 생각합니다.",
-                            3: "그 사건에 대한 제 생각은 이러이러합니다."
+                            1: {"question": "자기소개 해주세요", "answer": "안녕하세요 저는 백엔드 개발자 지망생입니다."},
+                            2: {"question": "IT 산업에 대해 어떻게 생각하시나요?", "answer": "안녕하세요 저는 그 문제에 대해선 이렇게 생각합니다."},
+                            3: {"question": "마지막으로 하시고 싶으신 말씀 있으세요?", "answer": "그 사건에 대한 제 생각은 이러이러합니다."}
                         }
                     }
                 }
@@ -268,7 +268,10 @@ def get_final_report(request, interview_id):
         transcripts = {}
         for q in completed_questions:
             try:
-                transcripts[q.order] = q.speech_analysis.report.transcript
+                transcripts[q.order] = {
+                    "question": q.question_text,
+                    "answer": q.speech_analysis.report.transcript
+                }
             except Exception:
                 pass
         speech_data = {

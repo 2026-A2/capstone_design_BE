@@ -73,7 +73,6 @@ def analyze_interview(request, interview_id: int):
                 "transcript": r["transcript"],
                 "silences": r["silences"],
                 "volume_timeline": r["volume"]["volume_timeline"],
-                "trailing_off": r["volume"]["trailing_off"],
                 "fillers": r["filler"]["fillers"],
             }
             for r in individual_results

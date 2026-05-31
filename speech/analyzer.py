@@ -38,9 +38,9 @@ def analyze_question(question) -> dict:
             analyze_path = file_path
 
         result = analyze(analyze_path)
-        segments = result.pop("segments", None)
+        result.pop("segments", None)
 
-        volume = analyze_volume(analyze_path, segments=segments)
+        volume = analyze_volume(analyze_path)
         filler = detect_fillers(analyze_path)
 
         result["volume"] = volume

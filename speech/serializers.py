@@ -22,7 +22,6 @@ class IndividualAnalysisSerializer(serializers.Serializer):
     transcript = serializers.CharField(help_text="해당 영상 전사 텍스트")
     silences = SilenceSerializer(many=True, help_text="침묵 구간 상세 목록")
     volume_timeline = serializers.ListField(help_text="음량 타임라인")
-    trailing_off = serializers.ListField(help_text="말끝 흐림 구간 목록")
     fillers = FillerDetailSerializer(many=True, help_text="습관어 상세 목록")
 
 

@@ -276,12 +276,14 @@ def analyze_behavior_video(video_path, config):
     summary = {
         'focus_rate': round(focus_rate, 1),
         'deviated_gaze_rate': round(deviated_rate, 1),  # 정면 이탈율로 명칭 변경
-        'blinks_per_min': round(blink_count / duration_min, 1) if duration_min > 0 else 0,
+        'blink_count': blink_count,
         'nod_count': 0,
         'shoulder_stability': round(shoulder_stability, 1),
         'lr_sway_count': lr_sway_count,
         'fb_sway_count': 0,
         'total_smile_rate': round(smile_rate, 1),
+
+        'duration_sec': round(duration_sec, 2),
     }
 
     return frame_details, summary

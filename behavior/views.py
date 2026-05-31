@@ -1,4 +1,4 @@
-import os
+import os,cv2
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
@@ -87,7 +87,7 @@ def process_video_analysis(request, interview_id):
         ]
         BehaviorDetail.objects.bulk_create(details_to_create)
 
-        duration_sec = len(frame_details) * 0.2  
+        duration_sec = summary.get('duration_sec', 0.0)
         
         question_obj.gaze_front_ratio = summary.get('focus_rate', 0.0)
         question_obj.gaze_deviation_ratio = summary.get('deviated_gaze_rate', 0.0)

@@ -87,3 +87,22 @@ class FinalReportSerializer(serializers.Serializer):
     total_video_duration = serializers.IntegerField(help_text="전체 영상 시간 (초 단위)")
     created_at = serializers.CharField(help_text="면접 일시 (ISO 포맷팅)")
     analysis_result = FinalAnalysisResultSerializer()
+
+# [5번 API 최종 응답 구조]
+class TrendItemSerializer(serializers.Serializer):
+
+    interview_id = serializers.IntegerField()
+    date = serializers.CharField()
+    interview_type = serializers.CharField()
+    gaze_front_ratio = serializers.FloatField()
+    gaze_deviation_ratio = serializers.FloatField()
+    body_sway_per_min = serializers.FloatField()
+    shoulder_stability = serializers.FloatField()
+    blink_per_min = serializers.FloatField()
+    nod_per_min = serializers.FloatField()
+    smile_ratio = serializers.FloatField()
+
+
+class CumulativeTrendsResponseSerializer(serializers.Serializer):
+    total_interview_count = serializers.IntegerField()
+    trends = TrendItemSerializer(many=True)

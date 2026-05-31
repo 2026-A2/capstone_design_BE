@@ -16,7 +16,8 @@ from .serializers import (
     InterviewCreateSerializer, 
     InterviewResponseSerializer,
     InterviewListElementSerializer,
-    FinalReportSerializer
+    FinalReportSerializer,
+    CumulativeTrendsResponseSerializer
 )
 # 🌟 behavior 앱에 선언된 캘리브레이션 연산 로직 호출
 from behavior.analysis_logic import run_calibration 
@@ -213,4 +214,174 @@ def get_final_report(request, interview_id):
                 "comment": "추후 음성 분석 결과 필드 추가 예정 영역"
             }
         }
+    }, status=status.HTTP_200_OK)
+
+
+
+# ===========================================================================
+# 5. 회차별 변화 트렌드 데이터 조회 (GET)
+# Endpoint: /interviews/trends/
+# ===========================================================================
+@extend_schema(
+    summary="[5] 회차별 변화 트렌드 데이터 조회",
+    description="과거 역대 면접들의 핵심 분석 수치들을 시계열 형태로 반환합니다.",
+
+    responses={200: CumulativeTrendsResponseSerializer},
+
+    examples=[
+        OpenApiExample(
+            '5. 시계열 변화 트렌드 Response 예시',
+            value={
+                "total_interview_count": 2,
+                "trends": [
+                    {
+                        "interview_id": 1,
+                        "date": "2026-05-20",
+                        "interview_type": "JOB",
+
+                        "gaze_front_ratio": 72.1,
+                        "gaze_deviation_ratio": 27.9,
+
+                        "body_sway_per_min": 5.4,
+                        "shoulder_stability": 88.2,
+
+                        "blink_per_min": 22.1,
+                        "nod_per_min": 3.2,
+
+                        "smile_ratio": 5.0
+                    },
+                    {
+                        "interview_id": 2,
+                        "date": "2026-05-25",
+                        "interview_type": "RESUME",
+
+                        "gaze_front_ratio": 85.5,
+                        "gaze_deviation_ratio": 14.5,
+
+                        "body_sway_per_min": 2.3,
+                        "shoulder_stability": 92.5,
+
+                        "blink_per_min": 15.2,
+                        "nod_per_min": 4.1,
+
+                        "smile_ratio": 12.5
+                    }
+                ]
+            },
+            response_only=True
+        )
+    ],
+
+    tags=['1. Interviews']
+)
+@api_view(['GET'])
+def get_interview_trends(request):
+
+    completed_interviews = Interview.objects.filter(
+        status='COMPLETED'
+    ).order_by('created_at')
+
+    trends_list = []
+
+    for interview in completed_interviews:
+
+        completed_questions = interview.questions.filter(
+            status='COMPLETED'
+        )
+
+        if not completed_questions.exists():
+            continue
+
+        # =========================
+        # 총 영상 시간
+        # =========================
+        total_duration = (
+            completed_questions.aggregate(
+                Sum('video_duration')
+            )['video_duration__sum'] or 0.0
+        )
+
+        total_duration_min = (
+            total_duration / 60
+            if total_duration > 0 else 1.0
+        )
+
+        # =========================
+        # 평균 비율 데이터
+        # =========================
+        avg_gaze_front = (
+            completed_questions.aggregate(
+                Avg('gaze_front_ratio')
+            )['gaze_front_ratio__avg'] or 0.0
+        )
+
+        avg_gaze_dev = (
+            completed_questions.aggregate(
+                Avg('gaze_deviation_ratio')
+            )['gaze_deviation_ratio__avg'] or 0.0
+        )
+
+        avg_shoulder = (
+            completed_questions.aggregate(
+                Avg('shoulder_stability_ratio')
+            )['shoulder_stability_ratio__avg'] or 0.0
+        )
+
+        avg_smile = (
+            completed_questions.aggregate(
+                Avg('smile_ratio')
+            )['smile_ratio__avg'] or 0.0
+        )
+
+        # =========================
+        # raw count 합산
+        # =========================
+        total_sways = (
+            completed_questions.aggregate(
+                Sum('body_sway_count')
+            )['body_sway_count__sum'] or 0
+        )
+
+        total_blinks = (
+            completed_questions.aggregate(
+                Sum('blink_count')
+            )['blink_count__sum'] or 0
+        )
+
+        total_nods = (
+            completed_questions.aggregate(
+                Sum('nod_count')
+            )['nod_count__sum'] or 0
+        )
+
+        # =========================
+        # 분당 변환
+        # =========================
+        body_sway_per_min = total_sways / total_duration_min
+        blink_per_min = total_blinks / total_duration_min
+        nod_per_min = total_nods / total_duration_min
+
+        # =========================
+        # trends row 생성
+        # =========================
+        trends_list.append({
+            "interview_id": interview.id,
+            "date": interview.created_at.strftime("%Y-%m-%d"),
+            "interview_type": interview.interview_type,
+
+            "gaze_front_ratio": round(avg_gaze_front, 1),
+            "gaze_deviation_ratio": round(avg_gaze_dev, 1),
+
+            "body_sway_per_min": round(body_sway_per_min, 1),
+            "shoulder_stability": round(avg_shoulder, 1),
+
+            "blink_per_min": round(blink_per_min, 1),
+            "nod_per_min": round(nod_per_min, 1),
+
+            "smile_ratio": round(avg_smile, 1)
+        })
+
+    return Response({
+        "total_interview_count": len(trends_list),
+        "trends": trends_list
     }, status=status.HTTP_200_OK)

@@ -9,7 +9,7 @@ urlpatterns = [
     path('', views.interview_base_handler, name='interview_base_handler'),
 
     # 5. [누적 리포트 창] 회차별 변화 트렌드 데이터 조회 (GET)
-    path('trends/', behavior_views.get_interview_trends, name='get_interview_trends'),
+    path('trends/', interview_views.get_interview_trends, name='get_interview_trends'),
 
     # 2. 질문별 답변 영상 업로드 및 분석 요청 (POST)
     path('<int:interview_id>/questions/', behavior_views.process_video_analysis, name='process_video_analysis'),

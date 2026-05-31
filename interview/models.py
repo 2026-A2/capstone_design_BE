@@ -1,6 +1,15 @@
 # interview/models.py
 from django.db import models
 
+class Resume(models.Model):
+    title = models.CharField(max_length=100)
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.title
+
+
 class Interview(models.Model):
     TYPE_CHOICES = [('RESUME', '자소서 기반'), ('JOB', '직무 기반')]
     STATUS_CHOICES = [
@@ -13,7 +22,7 @@ class Interview(models.Model):
     ]
     interview_type = models.CharField(max_length=10, choices=TYPE_CHOICES)
     question_count = models.IntegerField()
-    resume_text = models.TextField(null=True, blank=True)
+    resume = models.ForeignKey(Resume,on_delete=models.SET_NULL,null=True,blank=True,related_name='interviews')
     job_category = models.CharField(max_length=100, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='CREATED')
@@ -21,6 +30,7 @@ class Interview(models.Model):
 
     def __str__(self):
         return f"[{self.id}] {self.interview_type} - {self.status}"
+
 
 
 class InterviewQuestion(models.Model):

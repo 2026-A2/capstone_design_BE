@@ -17,6 +17,7 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path, include
+from interview import views as interview_views
 from drf_spectacular.views import (SpectacularAPIView, SpectacularJSONAPIView, SpectacularYAMLAPIView, SpectacularSwaggerView, SpectacularRedocView)
 from django.conf import settings
 from django.conf.urls.static import static
@@ -25,7 +26,7 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    # path('api/', include('speech.urls')),
+    path('', include('speech.urls')),
 
     path("json/", SpectacularJSONAPIView.as_view(), name="schema-json"),
     path("yaml/", SpectacularYAMLAPIView.as_view(), name="swagger-yaml"),
@@ -33,6 +34,13 @@ urlpatterns = [
     path("redoc/", SpectacularRedocView.as_view(url_name="schema-json"), name="redoc"),
 
     path('interviews/', include('interview.urls')),
+
+   # 6. 저장된 자소서 목록 조회 (GET)
+    path('resumes/', interview_views.get_resume_list, name='get_resume_list'),
+    # 7. 자소서 상세 조회 (GET)
+    path('resumes/<int:resume_id>/', interview_views.get_resume_detail, name='get_resume_detail'),
+    # 8. 자소서 삭제 (DELETE)
+    path('resumes/<int:resume_id>/delete/', interview_views.delete_resume, name='delete_resume'),
 
 ]
 

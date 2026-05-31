@@ -25,10 +25,7 @@ SECRET_KEY = 'django-insecure-)hcvm5#@j-^%^8w=jxtc#3e!q(b3g7u2jszhr1c01!zr*czd5e
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-# 모든 접속을 허용하거나, 내 IP를 명시합니다.
-ALLOWED_HOSTS = ['*', '127.0.0.1', 'localhost', '192.168.0.63']
-
-# CORS 설정 (프론트엔드 연동 필수)
+ALLOWED_HOSTS = ['*', '127.0.0.1', 'localhost']
 CORS_ALLOW_ALL_ORIGINS = True
 
 
@@ -44,9 +41,9 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'drf_spectacular',
+    'interview',
     'behavior',
     'speech',
-    'interview',
   
 ]
 REST_FRAMEWORK = {
@@ -59,6 +56,9 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'API 명세서',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False, 
+
+    'SORT_OPERATIONS': False,
+    
 
 }
 # 

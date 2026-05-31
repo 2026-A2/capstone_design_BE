@@ -69,11 +69,11 @@ def detect_fillers(audio_path: str) -> dict:
     for i, seg in enumerate(segments):
         duration = seg["end"] - seg["start"]
 
-        if not (0.2 <= duration <= 0.6):
+        if not (0.75 <= duration <= 2.5):
             continue
 
-        prev_long = i > 0 and (segments[i - 1]["end"] - segments[i - 1]["start"]) > 0.5
-        next_long = i < len(segments) - 1 and (segments[i + 1]["end"] - segments[i + 1]["start"]) > 0.5
+        prev_long = i > 0 and (segments[i - 1]["end"] - segments[i - 1]["start"]) > 0.75
+        next_long = i < len(segments) - 1 and (segments[i + 1]["end"] - segments[i + 1]["start"]) > 0.75
 
         if not (prev_long and next_long):
             continue

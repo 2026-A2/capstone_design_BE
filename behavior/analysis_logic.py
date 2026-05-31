@@ -1,33 +1,68 @@
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision
 import numpy as np
 import math
+import os
+import urllib.request
 from collections import deque
 
-mp_face_mesh = mp.solutions.face_mesh
-mp_pose = mp.solutions.pose
+_MODEL_DIR = os.path.join(os.path.dirname(__file__), 'models')
+_FACE_MODEL_PATH = os.path.join(_MODEL_DIR, 'face_landmarker.task')
+_POSE_MODEL_PATH = os.path.join(_MODEL_DIR, 'pose_landmarker.task')
+
+_FACE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
+_POSE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task'
+
+
+def _ensure_models():
+    os.makedirs(_MODEL_DIR, exist_ok=True)
+    if not os.path.exists(_FACE_MODEL_PATH):
+        print("face_landmarker.task 모델 다운로드 중...")
+        urllib.request.urlretrieve(_FACE_MODEL_URL, _FACE_MODEL_PATH)
+    if not os.path.exists(_POSE_MODEL_PATH):
+        print("pose_landmarker.task 모델 다운로드 중...")
+        urllib.request.urlretrieve(_POSE_MODEL_URL, _POSE_MODEL_PATH)
+
+
+def _make_face_landmarker():
+    _ensure_models()
+    options = vision.FaceLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=_FACE_MODEL_PATH),
+        running_mode=vision.RunningMode.IMAGE,
+        num_faces=1,
+    )
+    return vision.FaceLandmarker.create_from_options(options)
+
+
+def _make_pose_landmarker():
+    _ensure_models()
+    options = vision.PoseLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=_POSE_MODEL_PATH),
+        running_mode=vision.RunningMode.IMAGE,
+    )
+    return vision.PoseLandmarker.create_from_options(options)
+
 
 # MediaPipe 랜드마크 인덱스 정의
 LEFT_EYE_TOP, LEFT_EYE_BOTTOM = 159, 145
 LEFT_EYE_LEFT, LEFT_EYE_RIGHT = 33, 133
 RIGHT_EYE_TOP, RIGHT_EYE_BOTTOM = 386, 374
 RIGHT_EYE_LEFT, RIGHT_EYE_RIGHT = 362, 263
-NOSE_TIP = 1         
-LEFT_EYE_PUPIL = 468  
+NOSE_TIP = 1
+LEFT_EYE_PUPIL = 468
 
 
 def get_pixel_coords(landmark, width, height):
-    """랜드마크의 정규화된 좌표를 실제 픽셀 좌표로 변환"""
     return int(landmark.x * width), int(landmark.y * height)
 
 
 def calculate_distance(p1, p2):
-    """두 점 사이의 유클리디안 거리 계산"""
     return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
 
 def get_frame_metrics(landmarks, width, height):
-    """한 프레임에서 눈, 고개, 시선 관련 메트릭 추출"""
     l_top = get_pixel_coords(landmarks[LEFT_EYE_TOP], width, height)
     l_bottom = get_pixel_coords(landmarks[LEFT_EYE_BOTTOM], width, height)
     l_left = get_pixel_coords(landmarks[LEFT_EYE_LEFT], width, height)
@@ -41,19 +76,16 @@ def get_frame_metrics(landmarks, width, height):
     nose = get_pixel_coords(landmarks[NOSE_TIP], width, height)
     l_pupil = get_pixel_coords(landmarks[LEFT_EYE_PUPIL], width, height)
 
-    # 1. EAR 계산
     l_vert, l_horz = calculate_distance(l_top, l_bottom), calculate_distance(l_left, l_right)
     r_vert, r_horz = calculate_distance(r_top, r_bottom), calculate_distance(r_left, r_right)
     ear = ((l_vert / l_horz if l_horz > 0 else 0) + (r_vert / r_horz if r_horz > 0 else 0)) / 2.0
 
-    # 2. 고개 회전 (Head Turn) 및 기울기 (Head Tilt)
     dist_nose_to_left = calculate_distance(nose, l_left)
     dist_nose_to_right = calculate_distance(nose, r_right)
     total_eye_width = dist_nose_to_left + dist_nose_to_right
     head_turn = dist_nose_to_left / total_eye_width if total_eye_width > 0 else 0.5
     head_tilt = abs(l_left[1] - r_right[1])
 
-    # 3. 시선 비율 (Gaze Ratio)
     l_eye_width = calculate_distance(l_left, l_right)
     l_pupil_offset = calculate_distance(l_left, l_pupil)
     gaze_ratio = l_pupil_offset / l_eye_width if l_eye_width > 0 else 0.5
@@ -61,49 +93,42 @@ def get_frame_metrics(landmarks, width, height):
     return ear, head_turn, head_tilt, gaze_ratio
 
 
-# ===========================================================================
-# [기능 1] 초기 세팅 영상 분석 함수 (Calibration)
-# ===========================================================================
 def run_calibration(video_path):
-    """
-    초기 세팅 영상을 분석하여 사용자의 정면 기준값(Threshold)을 리턴합니다.
-    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"초기 세팅 영상을 열 수 없습니다: {video_path}")
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    
+
     ear_list, head_turn_list, head_tilt_list, gaze_list = [], [], [], []
 
-    with mp_face_mesh.FaceMesh(max_num_faces=1, refine_landmarks=True) as face_mesh:
+    with _make_face_landmarker() as face_landmarker:
         while cap.isOpened():
             ret, frame = cap.read()
-            if not ret: 
+            if not ret:
                 break
-            
+
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = face_mesh.process(rgb)
-            
-            if results.multi_face_landmarks:
-                landmarks = results.multi_face_landmarks[0].landmark
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            result = face_landmarker.detect(mp_image)
+
+            if result.face_landmarks:
+                landmarks = result.face_landmarks[0]
                 ear, head_turn, head_tilt, gaze_ratio = get_frame_metrics(landmarks, width, height)
-                
                 ear_list.append(ear)
                 head_turn_list.append(head_turn)
                 head_tilt_list.append(head_tilt)
                 gaze_list.append(gaze_ratio)
-                
+
     cap.release()
 
     if not ear_list:
         raise RuntimeError("초기 세팅 영상에서 얼굴을 감지하지 못했습니다.")
 
-    # 상위 80%의 눈뜬 상태 데이터를 기준으로 평균 EAR 계산
     ear_list.sort()
-    normal_ear = sum(ear_list[int(len(ear_list)*0.2):]) / len(ear_list[int(len(ear_list)*0.2):])
-    
+    normal_ear = sum(ear_list[int(len(ear_list) * 0.2):]) / len(ear_list[int(len(ear_list) * 0.2):])
+
     return {
         "ear_threshold": normal_ear * 0.75,
         "base_head_turn": sum(head_turn_list) / len(head_turn_list),
@@ -114,143 +139,115 @@ def run_calibration(video_path):
     }
 
 
-# ===========================================================================
-# [기능 2] 본 면접 영상 분석 함수 (기존 구조 유지 + 초기값 반영)
-# ===========================================================================
 def analyze_behavior_video(video_path, config):
-    """
-    인자로 넘겨받은 config(초기 세팅값)를 기반으로 본 면접 영상을 정밀 분석합니다.
-    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"면접 영상을 열 수 없습니다: {video_path}")
-        
+
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # MediaPipe 초기화
-    face_mesh = mp_face_mesh.FaceMesh(max_num_faces=1, refine_landmarks=True)
-    pose = mp_pose.Pose()
-
-    # 저장 및 카운트용 변수
     frame_details = []
     blink_count = 0
     is_eye_closed_prev = False
 
-    # 흔들림 측정용 윈도우 설정
-    window_size = int(fps)  # 1초 크기의 window
+    window_size = int(fps)
     center_x_window = deque(maxlen=window_size)
     prev_sway_state = False
     lr_sway_count = 0
 
-    # 샘플링 간격 (초당 5프레임 저장)
     sample_interval = max(1, int(fps / 5))
     frame_idx = 0
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    with _make_face_landmarker() as face_landmarker, _make_pose_landmarker() as pose_landmarker:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-        # MediaPipe 추론
-        face_results = face_mesh.process(rgb_frame)
-        pose_results = pose.process(rgb_frame)
+            face_result = face_landmarker.detect(mp_image)
+            pose_result = pose_landmarker.detect(mp_image)
 
-        # 기본 detail 딕셔너리 구조 (기존 Django 구조 유지)
-        detail = {
-            'timestamp': round(frame_idx / fps, 2),
-            'is_blink': False,
-            'ear_value': 0.0,
-            'gaze_direction': 'center',  # 'center' 또는 'deviated'
-            'head_turn': 0.0,
-            'head_tilt': 0.0,
-            'gaze_ratio': 0.0,
-            'shoulder_tilt': 0.0,
-            'shoulder_width': 0.0,
-            'is_swaying': False,
-            'smile_ratio': 0.0,
-            'is_smiling': False,
-        }
+            detail = {
+                'timestamp': round(frame_idx / fps, 2),
+                'is_blink': False,
+                'ear_value': 0.0,
+                'gaze_direction': 'center',
+                'head_turn': 0.0,
+                'head_tilt': 0.0,
+                'gaze_ratio': 0.0,
+                'shoulder_tilt': 0.0,
+                'shoulder_width': 0.0,
+                'is_swaying': False,
+                'smile_ratio': 0.0,
+                'is_smiling': False,
+            }
 
-        # ------------------------------------------
-        # 1. 얼굴 및 시선 분석 (초기값 기준 판정)
-        # ------------------------------------------
-        if face_results.multi_face_landmarks:
-            landmarks = face_results.multi_face_landmarks[0].landmark
-            
-            # 테스트 코드의 정밀 메트릭 함수 활용
-            ear, head_turn, head_tilt, gaze_ratio = get_frame_metrics(landmarks, width, height)
-            
-            detail['ear_value'] = float(ear)
-            detail['head_turn'] = float(head_turn)
-            detail['head_tilt'] = float(head_tilt)
-            detail['gaze_ratio'] = float(gaze_ratio)
+            if face_result.face_landmarks:
+                landmarks = face_result.face_landmarks[0]
 
-            # [수정 로직] 초기 세팅값(config) 기준 눈 깜빡임 판정
-            is_closed = ear < config["ear_threshold"]
-            if is_eye_closed_prev and not is_closed:
-                blink_count += 1
-                detail['is_blink'] = True
-            is_eye_closed_prev = is_closed
+                ear, head_turn, head_tilt, gaze_ratio = get_frame_metrics(landmarks, width, height)
 
-            # [수정 로직] 초기 세팅값(config) 기준 정면(center) vs 이탈(deviated) 판정
-            is_head_turn_ok = abs(head_turn - config["base_head_turn"]) < config["head_turn_tolerance"]
-            is_head_tilt_ok = head_tilt < config["head_tilt_tolerance"]
-            is_iris_front = abs(gaze_ratio - config["base_gaze_ratio"]) < config["gaze_tolerance"]
-            
-            if is_head_turn_ok and is_head_tilt_ok and is_iris_front:
-                detail['gaze_direction'] = 'center'
-            else:
-                detail['gaze_direction'] = 'deviated'
+                detail['ear_value'] = float(ear)
+                detail['head_turn'] = float(head_turn)
+                detail['head_tilt'] = float(head_tilt)
+                detail['gaze_ratio'] = float(gaze_ratio)
 
-            # 미소 분석 (기존 로직 유지)
-            mouth_width = abs(landmarks[61].x - landmarks[291].x)
-            eye_width = abs(landmarks[33].x - landmarks[263].x)
-            smile_ratio = mouth_width / eye_width if eye_width > 0 else 0
-            
-            detail['smile_ratio'] = float(smile_ratio)
-            detail['is_smiling'] = smile_ratio > 1.7
+                is_closed = ear < config["ear_threshold"]
+                if is_eye_closed_prev and not is_closed:
+                    blink_count += 1
+                    detail['is_blink'] = True
+                is_eye_closed_prev = is_closed
 
-        # ------------------------------------------
-        # 2. 자세 분석 (어깨 및 흔들림 - 기존 로직 유지)
-        # ------------------------------------------
-        if pose_results.pose_landmarks:
-            ps_lm = pose_results.pose_landmarks.landmark
-            l_sh = ps_lm[11]
-            r_sh = ps_lm[12]
+                is_head_turn_ok = abs(head_turn - config["base_head_turn"]) < config["head_turn_tolerance"]
+                is_head_tilt_ok = head_tilt < config["head_tilt_tolerance"]
+                is_iris_front = abs(gaze_ratio - config["base_gaze_ratio"]) < config["gaze_tolerance"]
 
-            curr_tilt = l_sh.y - r_sh.y
-            curr_width = abs(l_sh.x - r_sh.x)
-            curr_center_x = (l_sh.x + r_sh.x) / 2
+                if is_head_turn_ok and is_head_tilt_ok and is_iris_front:
+                    detail['gaze_direction'] = 'center'
+                else:
+                    detail['gaze_direction'] = 'deviated'
 
-            detail['shoulder_tilt'] = float(curr_tilt)
-            detail['shoulder_width'] = float(curr_width)
+                mouth_width = abs(landmarks[61].x - landmarks[291].x)
+                eye_width = abs(landmarks[33].x - landmarks[263].x)
+                smile_ratio = mouth_width / eye_width if eye_width > 0 else 0
 
-            # 1초 윈도우 기준 몸 흔들림 감지
-            center_x_window.append(curr_center_x)
-            if len(center_x_window) == window_size:
-                sway_std = np.std(center_x_window)
-                is_sway_now = sway_std > 0.005
-                detail['is_swaying'] = is_sway_now
+                detail['smile_ratio'] = float(smile_ratio)
+                detail['is_smiling'] = smile_ratio > 1.7
 
-                if is_sway_now and not prev_sway_state:
-                    lr_sway_count += 1
-                prev_sway_state = is_sway_now
+            if pose_result.pose_landmarks:
+                ps_lm = pose_result.pose_landmarks[0]
+                l_sh = ps_lm[11]
+                r_sh = ps_lm[12]
 
-        # 샘플링 주기마다 기록 저장
-        if frame_idx % sample_interval == 0:
-            frame_details.append(detail)
+                curr_tilt = l_sh.y - r_sh.y
+                curr_width = abs(l_sh.x - r_sh.x)
+                curr_center_x = (l_sh.x + r_sh.x) / 2
 
-        frame_idx += 1
+                detail['shoulder_tilt'] = float(curr_tilt)
+                detail['shoulder_width'] = float(curr_width)
+
+                center_x_window.append(curr_center_x)
+                if len(center_x_window) == window_size:
+                    sway_std = np.std(center_x_window)
+                    is_sway_now = sway_std > 0.005
+                    detail['is_swaying'] = is_sway_now
+
+                    if is_sway_now and not prev_sway_state:
+                        lr_sway_count += 1
+                    prev_sway_state = is_sway_now
+
+            if frame_idx % sample_interval == 0:
+                frame_details.append(detail)
+
+            frame_idx += 1
 
     cap.release()
 
-    # ======================================================
-    # 3. SUMMARY 요약 데이터 생성 (기존 구조 맞춤)
-    # ======================================================
     total_frames = len(frame_details)
     duration_sec = frame_idx / fps
     duration_min = duration_sec / 60
@@ -259,8 +256,6 @@ def analyze_behavior_video(video_path, config):
         sum(1 for d in frame_details if d['gaze_direction'] == 'center') / total_frames * 100
         if total_frames > 0 else 0
     )
-    
-    # 정면이 아니면 모두 시선 이탈(deviated) 처리
     deviated_rate = 100.0 - focus_rate
 
     smile_rate = (

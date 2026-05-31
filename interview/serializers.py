@@ -17,11 +17,24 @@ class InterviewCreateSerializer(serializers.Serializer):
         default=5,
         help_text="사용자가 설정한 질문 개수 (2~5개)"
     )
-    resume_text = serializers.CharField(
-        required=False, 
-        allow_blank=True, 
-        help_text="type이 RESUME일 때 필수 입력"
+
+    resume_id = serializers.IntegerField(
+        required=False,
+        help_text="기존 자소서 선택 시 사용 "
     )
+
+    resume_title = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="새 자소서 작성 시 제목"
+    )
+
+    resume_content = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="새 자소서 작성 시 내용"
+    )
+    
     job_category = serializers.CharField(
         required=False, 
         allow_blank=True, 
@@ -32,7 +45,41 @@ class InterviewCreateSerializer(serializers.Serializer):
         help_text="약 5~10초 내외의 초기 환경 측정용 녹화 영상 파일 (.mp4 등)"
     )
 
+    def validate(self, data):
 
+        interview_type = data.get('interview_type')
+
+        # 자소서 기반 면접
+        if interview_type == 'RESUME':
+
+            resume_id = data.get('resume_id')
+            resume_title = data.get('resume_title')
+            resume_content = data.get('resume_content')
+
+            has_existing_resume = bool(resume_id)
+            has_new_resume = bool(resume_title and resume_content)
+
+            # 둘 다 없는 경우
+            if not has_existing_resume and not has_new_resume:
+                raise serializers.ValidationError(
+                    "RESUME 면접은 기존 자소서 선택(resume_id) 또는 새 자소서 입력(resume_title, resume_content) 중 하나가 필요합니다."
+                )
+
+            # 둘 다 보낸 경우
+            if has_existing_resume and has_new_resume:
+                raise serializers.ValidationError(
+                    "resume_id와 resume_title/resume_content를 동시에 보낼 수 없습니다."
+                )
+
+        # 직무 기반 면접
+        elif interview_type == 'JOB':
+
+            if not data.get('job_category'):
+                raise serializers.ValidationError(
+                    "JOB 면접은 job_category가 필요합니다."
+                )
+
+        return data
 # ===========================================================================
 # [1번 API 응답용] 면접 세션 생성 완료 반환 데이터
 # ===========================================================================
@@ -72,7 +119,15 @@ class ReportBehaviorSerializer(serializers.Serializer):
     smile_ratio = serializers.FloatField(help_text="미소율 (%)")
 
 class ReportSpeechSerializer(serializers.Serializer):
-    comment = serializers.CharField(help_text="음성 분석 총평 문구")
+    avg_spm = serializers.FloatField(help_text="평균 말하기 속도 (음절/분)")
+    pace = serializers.CharField(help_text="말하기 속도 레벨 (빠름/보통/느림)")
+    avg_db = serializers.FloatField(help_text="평균 음량 (dB)")
+    volume_level = serializers.CharField(help_text="음량 레벨 (크다/보통/작다)")
+    total_filler_count = serializers.IntegerField(help_text="전체 필러 횟수")
+    frequent_fillers = serializers.ListField(child=serializers.CharField(), help_text="자주 사용한 필러 단어 목록")
+    total_silence_count = serializers.IntegerField(help_text="침묵 횟수")
+    avg_silence_duration = serializers.FloatField(help_text="평균 침묵 지속 시간 (초)")
+    transcript = serializers.CharField(help_text="전체 답변 스크립트 (질문별 줄바꿈 구분)")
 
 class FinalAnalysisResultSerializer(serializers.Serializer):
     behavior = ReportBehaviorSerializer()
@@ -101,8 +156,29 @@ class TrendItemSerializer(serializers.Serializer):
     blink_per_min = serializers.FloatField()
     nod_per_min = serializers.FloatField()
     smile_ratio = serializers.FloatField()
+    avg_spm = serializers.FloatField(required=False, help_text="평균 말하기 속도 (음절/분)")
+    pace = serializers.CharField(required=False, help_text="말하기 속도 레벨 (빠름/보통/느림)")
+    avg_db = serializers.FloatField(required=False, help_text="평균 음량 (dB)")
+    volume_level = serializers.CharField(required=False, help_text="음량 레벨 (크다/보통/작다)")
+    total_filler_count = serializers.IntegerField(required=False, help_text="전체 필러 횟수")
+    total_silence_count = serializers.IntegerField(required=False, help_text="침묵 횟수")
 
 
 class CumulativeTrendsResponseSerializer(serializers.Serializer):
     total_interview_count = serializers.IntegerField()
     trends = TrendItemSerializer(many=True)
+
+class ResumeListSerializer(serializers.Serializer):
+    resume_id = serializers.IntegerField()
+    title = serializers.CharField()
+    created_at = serializers.CharField()
+
+class ResumeDetailSerializer(serializers.Serializer):
+    resume_id = serializers.IntegerField()
+    title = serializers.CharField()
+    content = serializers.CharField()
+    created_at = serializers.CharField()
+
+
+class DeleteResponseSerializer(serializers.Serializer):
+    message = serializers.CharField()

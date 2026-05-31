@@ -35,13 +35,20 @@ urlpatterns = [
 
     path('interviews/', include('interview.urls')),
 
-   # 6. 저장된 자소서 목록 조회 (GET)
-    path('resumes/', interview_views.get_resume_list, name='get_resume_list'),
-    # 7. 자소서 상세 조회 (GET)
-    path('resumes/<int:resume_id>/', interview_views.get_resume_detail, name='get_resume_detail'),
-    # 8. 자소서 삭제 (DELETE)
-    path('resumes/<int:resume_id>/delete/', interview_views.delete_resume, name='delete_resume'),
+   # [6] 자소서 저장
+    path('resumes/create/', interview_views.create_resume, name='create_resume'),
 
+    # [7] 저장된 자소서 목록 조회
+    path('resumes/', interview_views.get_resume_list, name='get_resume_list'),
+
+    # [8] 자소서 상세 조회
+    path('resumes/<int:resume_id>/', interview_views.get_resume_detail, name='get_resume_detail'),
+
+    # [9] 자소서 수정
+    path('resumes/<int:resume_id>/update/', interview_views.update_resume, name='update_resume'),
+
+    # [10] 자소서 삭제
+    path('resumes/<int:resume_id>/delete/', interview_views.delete_resume, name='delete_resume'),
 ]
 
 # 미디어 파일(영상 등) 접근 설정

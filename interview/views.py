@@ -21,6 +21,8 @@ from .serializers import (
     ResumeListSerializer,
     ResumeDetailSerializer,
     DeleteResponseSerializer,
+    ResumeCreateSerializer,
+    ResumeUpdateSerializer,
 )
 
 # 🌟 behavior 앱에 선언된 캘리브레이션 연산 로직 호출
@@ -42,7 +44,6 @@ from behavior.analysis_logic import run_calibration
         '새 자소서 작성',
         value={
             "interview_type": "RESUME",
-            "resume_title": "프론트엔드 자소서",
             "resume_content": "안녕하세요...",
             "question_count": 5,
             "video_file": "(파일)"
@@ -107,49 +108,28 @@ def interview_base_handler(request):
         if not video_file:
             return Response({"error": "캘리브레이션 영상 파일이 누락되었습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 자소서 처리
-        resume = None
+        resume_content = None
 
         if validated_data['interview_type'] == 'RESUME':
 
-            resume_id = validated_data.get('resume_id')
+            resume_content = validated_data.get(
+                'resume_content'
+            )
 
-            if resume_id:
+            if not resume_content:
 
-                resume = get_object_or_404(
-                    Resume,
-                    id=resume_id
-                )
-
-            else:
-
-                resume_title = validated_data.get(
-                    'resume_title'
-                )
-
-                resume_content = validated_data.get(
-                    'resume_content'
-                )
-
-                if not resume_title or not resume_content:
-
-                    return Response(
-                        {
-                            "error": "새 자소서 생성 시 resume_title, resume_content는 필수입니다."
-                        },
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                resume = Resume.objects.create(
-                    title=resume_title,
-                    content=resume_content
+                return Response(
+                    {
+                        "error": "resume_content는 필수입니다."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
                 )
 
 
         # 면접 생성
         interview = Interview.objects.create(
             interview_type=validated_data['interview_type'],
-            resume=resume,
+            resume_content=resume_content,
             job_category=validated_data.get(
                 'job_category',
                 ''
@@ -498,10 +478,62 @@ def get_interview_trends(request):
         "trends": trends_list
     }, status=status.HTTP_200_OK)
 
+
 @extend_schema(
-    summary="[6] 저장된 자소서 목록 조회",
+    summary="[6] 자소서 저장",
+    description="새로운 자소서를 저장합니다.",
+    request=ResumeCreateSerializer,
+    responses={201: ResumeDetailSerializer},
+    examples=[
+        OpenApiExample(
+            '자소서 저장 요청',
+            value={
+                "title": "프론트엔드 자소서",
+                "content": "안녕하세요. 프론트엔드 개발자를 희망하는..."
+            },
+            request_only=True
+        ),
+        OpenApiExample(
+            '자소서 저장 성공',
+            value={
+                "resume_id": 1,
+                "title": "프론트엔드 자소서",
+                "content": "안녕하세요. 프론트엔드 개발자를 희망하는...",
+                "created_at": "2026-05-31"
+            },
+            response_only=True
+        )
+    ],
+    tags=['2. Resumes']
+)
+@api_view(['POST'])
+def create_resume(request):
+
+    serializer = ResumeCreateSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    resume = Resume.objects.create(
+        title=serializer.validated_data['title'],
+        content=serializer.validated_data['content']
+    )
+
+    return Response({
+        "resume_id": resume.id,
+        "title": resume.title,
+        "content": resume.content,
+        "created_at": resume.created_at.strftime("%Y-%m-%d")
+    }, status=status.HTTP_201_CREATED)
+
+
+@extend_schema(
+    summary="[7] 저장된 자소서 목록 조회",
     description="사용자가 저장한 자소서 목록을 조회합니다.",
-    responses={200: ResumeListSerializer(many=True)}, 
+    responses={200: ResumeListSerializer(many=True)},
     examples=[
         OpenApiExample(
             '자소서 목록',
@@ -543,7 +575,7 @@ def get_resume_list(request):
 
 
 @extend_schema(
-    summary="[7] 자소서 상세 조회",
+    summary="[8] 자소서 상세 조회",
     description="특정 자소서 내용을 조회합니다.",
     responses={200: ResumeDetailSerializer},
     examples=[
@@ -573,22 +605,82 @@ def get_resume_detail(request, resume_id):
         "title": resume.title,
         "content": resume.content,
         "created_at": resume.created_at.strftime("%Y-%m-%d")
-    })
+    }, status=status.HTTP_200_OK)
+
 
 @extend_schema(
-    summary="[8] 자소서 삭제",
+    summary="[9] 자소서 수정",
+    description="저장된 자소서를 수정합니다.",
+    request=ResumeUpdateSerializer,
+    responses={200: ResumeDetailSerializer},
+    examples=[
+        OpenApiExample(
+            '자소서 수정 요청',
+            value={
+                "title": "수정된 자소서",
+                "content": "수정된 자소서 내용입니다."
+            },
+            request_only=True
+        ),
+        OpenApiExample(
+            '자소서 수정 성공',
+            value={
+                "resume_id": 1,
+                "title": "수정된 자소서",
+                "content": "수정된 자소서 내용입니다.",
+                "created_at": "2026-05-31"
+            },
+            response_only=True
+        )
+    ],
+    tags=['2. Resumes']
+)
+@api_view(['PUT'])
+def update_resume(request, resume_id):
+
+    resume = get_object_or_404(
+        Resume,
+        id=resume_id
+    )
+
+    serializer = ResumeUpdateSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if 'title' in serializer.validated_data:
+        resume.title = serializer.validated_data['title']
+
+    if 'content' in serializer.validated_data:
+        resume.content = serializer.validated_data['content']
+
+    resume.save()
+
+    return Response({
+        "resume_id": resume.id,
+        "title": resume.title,
+        "content": resume.content,
+        "created_at": resume.created_at.strftime("%Y-%m-%d")
+    }, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    summary="[10] 자소서 삭제",
     description="저장된 자소서를 삭제합니다.",
     responses={200: DeleteResponseSerializer},
     examples=[
-    OpenApiExample(
-        '삭제 성공',
-        value={
-            "message": "자소서가 삭제되었습니다.",
-            "resume_id": 1
-        },
-        response_only=True
-    )
-],
+        OpenApiExample(
+            '자소서 삭제 성공',
+            value={
+                "message": "자소서가 삭제되었습니다.",
+                "resume_id": 1
+            },
+            response_only=True
+        )
+    ],
     tags=['2. Resumes']
 )
 @api_view(['DELETE'])
@@ -604,17 +696,19 @@ def delete_resume(request, resume_id):
     return Response({
         "message": "자소서가 삭제되었습니다.",
         "resume_id": resume_id
-    })
+    }, status=status.HTTP_200_OK)
+
 
 @extend_schema(
-    summary="[9] 면접 리포트 삭제",
+    summary="[11] 면접 리포트 삭제",
     description="특정 면접 리포트를 삭제합니다.",
     responses={200: DeleteResponseSerializer},
     examples=[
         OpenApiExample(
-            '삭제 성공',
+            '면접 리포트 삭제 성공',
             value={
-                "message": "면접 리포트가 삭제되었습니다."
+                "message": "면접 리포트가 삭제되었습니다.",
+                "interview_id": 1
             },
             response_only=True
         )
@@ -622,10 +716,7 @@ def delete_resume(request, resume_id):
     tags=['1. Interviews']
 )
 @api_view(['DELETE'])
-def delete_interview_report(
-    request,
-    interview_id
-):
+def delete_interview_report(request, interview_id):
 
     interview = get_object_or_404(
         Interview,
@@ -637,4 +728,4 @@ def delete_interview_report(
     return Response({
         "message": "면접 리포트가 삭제되었습니다.",
         "interview_id": interview_id
-    })
+    }, status=status.HTTP_200_OK)

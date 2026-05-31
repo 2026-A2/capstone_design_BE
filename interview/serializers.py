@@ -7,74 +7,55 @@ from .models import Interview
 # ===========================================================================
 
 class InterviewCreateSerializer(serializers.Serializer):
+
     interview_type = serializers.ChoiceField(
-        choices=['RESUME', 'JOB'], 
+        choices=['RESUME', 'JOB'],
         help_text="면접 유형 (RESUME 또는 JOB)"
     )
+
     question_count = serializers.IntegerField(
-        min_value=2, 
-        max_value=5, 
+        min_value=2,
+        max_value=5,
         default=5,
         help_text="사용자가 설정한 질문 개수 (2~5개)"
-    )
-
-    resume_id = serializers.IntegerField(
-        required=False,
-        help_text="기존 자소서 선택 시 사용 "
-    )
-
-    resume_title = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        help_text="새 자소서 작성 시 제목"
     )
 
     resume_content = serializers.CharField(
         required=False,
         allow_blank=True,
-        help_text="새 자소서 작성 시 내용"
+        help_text="자소서 내용"
     )
-    
+
     job_category = serializers.CharField(
-        required=False, 
-        allow_blank=True, 
-        help_text="type이 JOB일 때 필수 입력 (예: IT, FINANCE)"
+        required=False,
+        allow_blank=True,
+        help_text="type이 JOB일 때 필수 입력"
     )
-    # 🌟 캘리브레이션 영상 파일을 필수 필드로 통합 수용!
+
     video_file = serializers.FileField(
-        help_text="약 5~10초 내외의 초기 환경 측정용 녹화 영상 파일 (.mp4 등)"
+        help_text="초기 캘리브레이션 영상 파일"
     )
 
     def validate(self, data):
 
-        interview_type = data.get('interview_type')
+        interview_type = data.get(
+            'interview_type'
+        )
 
-        # 자소서 기반 면접
         if interview_type == 'RESUME':
 
-            resume_id = data.get('resume_id')
-            resume_title = data.get('resume_title')
-            resume_content = data.get('resume_content')
-
-            has_existing_resume = bool(resume_id)
-            has_new_resume = bool(resume_title and resume_content)
-
-            # 둘 다 없는 경우
-            if not has_existing_resume and not has_new_resume:
+            if not data.get(
+                'resume_content'
+            ):
                 raise serializers.ValidationError(
-                    "RESUME 면접은 기존 자소서 선택(resume_id) 또는 새 자소서 입력(resume_title, resume_content) 중 하나가 필요합니다."
+                    "RESUME 면접은 resume_content가 필요합니다."
                 )
 
-            # 둘 다 보낸 경우
-            if has_existing_resume and has_new_resume:
-                raise serializers.ValidationError(
-                    "resume_id와 resume_title/resume_content를 동시에 보낼 수 없습니다."
-                )
-
-        # 직무 기반 면접
         elif interview_type == 'JOB':
 
-            if not data.get('job_category'):
+            if not data.get(
+                'job_category'
+            ):
                 raise serializers.ValidationError(
                     "JOB 면접은 job_category가 필요합니다."
                 )
@@ -178,6 +159,23 @@ class ResumeDetailSerializer(serializers.Serializer):
     title = serializers.CharField()
     content = serializers.CharField()
     created_at = serializers.CharField()
+
+class ResumeCreateSerializer(serializers.Serializer):
+
+    title = serializers.CharField()
+
+    content = serializers.CharField()
+
+
+class ResumeUpdateSerializer(serializers.Serializer):
+
+    title = serializers.CharField(
+        required=False
+    )
+
+    content = serializers.CharField(
+        required=False
+    )
 
 
 class DeleteResponseSerializer(serializers.Serializer):

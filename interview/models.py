@@ -11,22 +11,54 @@ class Resume(models.Model):
 
 
 class Interview(models.Model):
-    TYPE_CHOICES = [('RESUME', '자소서 기반'), ('JOB', '직무 기반')]
+
+    TYPE_CHOICES = [
+        ('RESUME', '자소서 기반'),
+        ('JOB', '직무 기반')
+    ]
+
     STATUS_CHOICES = [
-        ('CREATED', '생성됨'), 
-        ('CALIBRATED', '캘리브레이션 완료'), 
-        ('PROGRESS', '진행중'), 
-        ('ANALYZING', '분석중'), 
-        ('COMPLETED', '완료'), 
+        ('CREATED', '생성됨'),
+        ('CALIBRATED', '캘리브레이션 완료'),
+        ('PROGRESS', '진행중'),
+        ('ANALYZING', '분석중'),
+        ('COMPLETED', '완료'),
         ('FAILED', '실패')
     ]
-    interview_type = models.CharField(max_length=10, choices=TYPE_CHOICES)
+
+    interview_type = models.CharField(
+        max_length=10,
+        choices=TYPE_CHOICES
+    )
+
     question_count = models.IntegerField()
-    resume = models.ForeignKey(Resume,on_delete=models.SET_NULL,null=True,blank=True,related_name='interviews')
-    job_category = models.CharField(max_length=100, null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='CREATED')
-    calibration_config = models.JSONField(null=True, blank=True, help_text="초기 캘리브레이션 기준값")
+
+    resume_content = models.TextField(
+        null=True,
+        blank=True
+    )
+
+    job_category = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='CREATED'
+    )
+
+    calibration_config = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="초기 캘리브레이션 기준값"
+    )
 
     def __str__(self):
         return f"[{self.id}] {self.interview_type} - {self.status}"

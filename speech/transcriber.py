@@ -4,6 +4,11 @@ from faster_whisper import WhisperModel
 _model = None
 _model_lock = threading.Lock()
 
+_filler_model = None
+_filler_model_lock = threading.Lock()
+
+_FILLER_PROMPT = "어, 저는 그 팀 프로젝트에서 음 백엔드를 맡았고, 아 주로 Python을 사용했습니다."
+
 
 def _get_model() -> WhisperModel:
     global _model
@@ -12,6 +17,26 @@ def _get_model() -> WhisperModel:
             print("Loading faster-whisper large-v3-turbo model...")
             _model = WhisperModel("large-v3-turbo", device="cpu", compute_type="int8")
     return _model
+
+
+def _get_filler_model() -> WhisperModel:
+    global _filler_model
+    with _filler_model_lock:
+        if _filler_model is None:
+            print("Loading faster-whisper small model for filler detection...")
+            _filler_model = WhisperModel("small", device="cpu", compute_type="int8")
+    return _filler_model
+
+
+def transcribe_for_fillers(audio_path: str) -> list:
+    model = _get_filler_model()
+    segments_gen, _ = model.transcribe(
+        audio_path,
+        language="ko",
+        word_timestamps=True,
+        initial_prompt=_FILLER_PROMPT,
+    )
+    return _segments_to_dict(segments_gen)
 
 
 def count_syllables(text: str) -> int:

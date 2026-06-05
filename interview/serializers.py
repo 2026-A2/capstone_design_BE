@@ -14,10 +14,10 @@ class InterviewCreateSerializer(serializers.Serializer):
     )
 
     question_count = serializers.IntegerField(
-        min_value=2,
-        max_value=5,
-        default=5,
-        help_text="사용자가 설정한 질문 개수 (2~5개)"
+        min_value=1,
+        max_value=4,
+        default=1,
+        help_text="사용자가 설정한 질문 개수 (1~4개)"
     )
 
     resume_content = serializers.CharField(

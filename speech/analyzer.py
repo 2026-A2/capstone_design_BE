@@ -1,5 +1,6 @@
 import os
 import ffmpeg
+from django.db import IntegrityError
 from speech.models import SpeechAnalysis, SpeechReport, SpeechSilence, SpeechFiller
 from speech.transcriber import analyze
 from speech.volume import analyze_volume
@@ -22,8 +23,11 @@ def _extract_audio(video_path: str) -> str:
 
 def analyze_question(question) -> dict:
     """InterviewQuestion 하나에 대해 음성 분석 수행 후 DB 저장 및 결과 dict 반환."""
-    if hasattr(question, 'speech_analysis'):
+    try:
+        _ = question.speech_analysis
         raise ValueError(f"question {question.id}는 이미 음성 분석이 완료되었습니다.")
+    except SpeechAnalysis.DoesNotExist:
+        pass
 
     file_path = question.video_path.path
     file_name = os.path.basename(file_path)
@@ -46,7 +50,10 @@ def analyze_question(question) -> dict:
         result["volume"] = volume
         result["filler"] = filler
 
-        speech_analysis = SpeechAnalysis.objects.create(question=question)
+        try:
+            speech_analysis = SpeechAnalysis.objects.create(question=question)
+        except IntegrityError:
+            raise ValueError(f"question {question.id}는 이미 음성 분석이 완료되었습니다.")
 
         SpeechReport.objects.create(
             analysis=speech_analysis,

@@ -56,7 +56,7 @@ from behavior.analysis_logic import run_calibration
         value={
             "interview_type": "RESUME",
             "resume_id": 1,
-            "question_count": 5,
+            "question_count": 4,
             "video_file": "(파일)"
         },
         request_only=True
@@ -67,7 +67,7 @@ from behavior.analysis_logic import run_calibration
         value={
             "interview_type": "JOB",
             "job_category": "Backend",
-            "question_count": 5,
+            "question_count": 4,
             "video_file": "(파일)"
         },
         request_only=True

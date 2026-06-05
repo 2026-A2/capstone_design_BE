@@ -771,7 +771,9 @@ def analyze_behavior_video(video_path, config):
         # --------------------------------------------------
         # 분석 패스
         # --------------------------------------------------
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        # webm 파일은 seek이 지원되지 않으므로 cap을 재오픈
+        cap.release()
+        cap = cv2.VideoCapture(video_path)
 
         while cap.isOpened():
             ret, frame = cap.read()

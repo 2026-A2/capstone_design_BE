@@ -1,5 +1,15 @@
+import re
 import threading
 from faster_whisper import WhisperModel
+
+_FILLER_WORDS = {"음", "어", "아"}
+_PUNCT_RE = re.compile(r'[^가-힣\w]')
+
+
+def _strip_fillers(transcript: str) -> str:
+    tokens = transcript.split()
+    cleaned = [t for t in tokens if _PUNCT_RE.sub('', t) not in _FILLER_WORDS]
+    return " ".join(cleaned)
 
 _model = None
 _model_lock = threading.Lock()
@@ -109,7 +119,7 @@ def analyze(audio_path: str, **kwargs) -> dict:
     )
     segments = _segments_to_dict(segments_gen)
 
-    transcript = " ".join(seg["text"].strip() for seg in segments)
+    transcript = _strip_fillers(" ".join(seg["text"].strip() for seg in segments))
     duration_sec = info.duration
 
     rate_info = calculate_speech_rate(transcript, duration_sec)

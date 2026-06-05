@@ -1,7 +1,7 @@
 import re
 from speech.transcriber import transcribe_for_fillers
 
-FILLER_WORDS = {"음", "어", "아", "그"}
+FILLER_WORDS = {"음", "어", "아"}
 
 _PUNCT_RE = re.compile(r'[^가-힣\w]')
 

@@ -27,6 +27,8 @@ from .serializers import (
     CumulativeTrendsResponseSerializer,
 )
 
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".webm"}
+
 
 # ===========================================================================
 # [2번 API] 질문별 답변 영상 업로드 및 분석 요청 (POST)
@@ -77,9 +79,17 @@ def process_video_analysis(request, interview_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    order = int(question_order)
+    ext = os.path.splitext(video_file.name)[1].lower()
 
-    ext = os.path.splitext(video_file.name)[1]
+    if ext not in ALLOWED_VIDEO_EXTENSIONS:
+        return Response(
+            {
+                "error": f"지원하지 않는 파일 형식입니다. mp4 또는 webm 파일만 허용됩니다."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    order = int(question_order)
 
     saved_file_name = default_storage.save(
         f"videos/intv_{interview_id}_{order}{ext}",
@@ -107,8 +117,6 @@ def process_video_analysis(request, interview_id):
             config=interview.calibration_config,
         )
 
-        # 기존 프레임별 상세 기록 삭제 후 새로 저장
-        # 같은 질문 영상을 다시 업로드/분석할 경우 중복 저장 방지
         BehaviorDetail.objects.filter(
             question=question_obj
         ).delete()
@@ -122,9 +130,6 @@ def process_video_analysis(request, interview_id):
                 is_blink=d.get("is_blink", False),
                 is_nodding=d.get("is_nodding", False),
                 is_smiling=d.get("is_smiling", False),
-
-                # analysis_logic.py에서는 shoulder_stable이라는 key로 내려옴
-                # DB 모델 필드는 shoulder_stable_frame이므로 여기서 매핑
                 shoulder_stable_frame=d.get("shoulder_stable", True),
             )
             for d in frame_details
@@ -132,66 +137,23 @@ def process_video_analysis(request, interview_id):
 
         BehaviorDetail.objects.bulk_create(details_to_create)
 
-        # ==================================================
-        # 질문별 최종 요약값 저장
-        # ==================================================
         duration_sec = summary.get("duration_sec", 0.0)
 
-        question_obj.gaze_front_ratio = summary.get(
-            "focus_rate",
-            0.0,
-        )
-
-        question_obj.gaze_deviation_ratio = summary.get(
-            "deviated_gaze_rate",
-            0.0,
-        )
-
-        # 중요 수정:
-        # 기존에는 lr_sway_count만 저장해서 앞뒤 흔들림이 누락됐음.
-        # 새 analysis_logic.py에서는 좌우+앞뒤 합산값을 body_sway_count로 제공함.
+        question_obj.gaze_front_ratio = summary.get("focus_rate", 0.0)
+        question_obj.gaze_deviation_ratio = summary.get("deviated_gaze_rate", 0.0)
         question_obj.body_sway_count = summary.get(
             "body_sway_count",
             summary.get("lr_sway_count", 0),
         )
-
-        question_obj.shoulder_stability_ratio = summary.get(
-            "shoulder_stability",
-            100.0,
-        )
-
-        # 중요 수정:
-        # 기존에는 blinks_per_min을 다시 duration으로 역산했음.
-        # 새 analysis_logic.py가 blink_count 원천 카운트를 주므로 그대로 저장.
-        question_obj.blink_count = summary.get(
-            "blink_count",
-            0,
-        )
-
-        question_obj.nod_count = summary.get(
-            "nod_count",
-            0,
-        )
-
-        question_obj.smile_ratio = summary.get(
-            "total_smile_rate",
-            0.0,
-        )
-
+        question_obj.shoulder_stability_ratio = summary.get("shoulder_stability", 100.0)
+        question_obj.blink_count = summary.get("blink_count", 0)
+        question_obj.nod_count = summary.get("nod_count", 0)
+        question_obj.smile_ratio = summary.get("total_smile_rate", 0.0)
         question_obj.video_duration = duration_sec
         question_obj.status = "COMPLETED"
         question_obj.save()
 
-        # ==================================================
-        # 음성 분석
-        # 현재 import가 주석 처리되어 있으므로, 실제 사용할 때만 활성화 필요
-        # ==================================================
-        try:
-            analyze_question(question_obj)
-        except NameError:
-            pass
-        except Exception as e:
-            print(f"[Speech] 음성 분석 실패 (question {order}): {e}")
+        # analyze_question(question_obj)
 
         all_completed = (
             interview.questions.filter(status="COMPLETED").count()
@@ -202,12 +164,7 @@ def process_video_analysis(request, interview_id):
             interview.status = "COMPLETED"
             interview.save()
 
-            try:
-                create_speech_interview_report(interview)
-            except NameError:
-                pass
-            except Exception as e:
-                print(f"[Speech] 인터뷰 집계 리포트 생성 실패: {e}")
+            # create_speech_interview_report(interview)
 
         out_data = {
             "interview_id": interview.id,
@@ -287,9 +244,7 @@ def get_interview_trends(request):
             continue
 
         total_duration = (
-            questions.aggregate(Sum("video_duration"))[
-                "video_duration__sum"
-            ]
+            questions.aggregate(Sum("video_duration"))["video_duration__sum"]
             or 0.0
         )
 
@@ -300,30 +255,22 @@ def get_interview_trends(request):
         )
 
         avg_gaze_front = (
-            questions.aggregate(Avg("gaze_front_ratio"))[
-                "gaze_front_ratio__avg"
-            ]
+            questions.aggregate(Avg("gaze_front_ratio"))["gaze_front_ratio__avg"]
             or 0.0
         )
 
         avg_smile = (
-            questions.aggregate(Avg("smile_ratio"))[
-                "smile_ratio__avg"
-            ]
+            questions.aggregate(Avg("smile_ratio"))["smile_ratio__avg"]
             or 0.0
         )
 
         total_sways = (
-            questions.aggregate(Sum("body_sway_count"))[
-                "body_sway_count__sum"
-            ]
+            questions.aggregate(Sum("body_sway_count"))["body_sway_count__sum"]
             or 0
         )
 
         total_blinks = (
-            questions.aggregate(Sum("blink_count"))[
-                "blink_count__sum"
-            ]
+            questions.aggregate(Sum("blink_count"))["blink_count__sum"]
             or 0
         )
 

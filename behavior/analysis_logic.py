@@ -91,8 +91,10 @@ LEFT_FACE  = 234
 RIGHT_FACE = 454
 
 # Pose landmark
-LEFT_SHOULDER  = 11
-RIGHT_SHOULDER = 12
+LEFT_SHOULDER   = 11
+RIGHT_SHOULDER  = 12
+
+RIGHT_EYE_PUPIL = 473
 
 
 # ==================================================
@@ -120,24 +122,29 @@ FB_FACE_THRESHOLD  = 0.045
 
 BODY_SMOOTHING_FRAMES = 5
 
-# [수정] FB 가중합 점수 방식
-# OR 조건 대신 세 신호를 정규화 후 가중합으로 통합
-# 얼굴 크기(face)에 높은 가중치: 좌우 움직임의 영향이 가장 적음
+# FB 가중합 점수 방식
 FB_SCORE_THRESHOLD        = 0.9
 FB_SCORE_RETURN_THRESHOLD = 0.35
 FB_WEIGHT_WIDTH           = 0.25
 FB_WEIGHT_Y               = 0.25
 FB_WEIGHT_FACE            = 0.50
 
-# [수정] LR 활성 구간 FB 억제
-# 좌우 기울임 시 어깨 너비/y가 연동 변화 → FB 오탐 방지
+# LR 활성 구간 FB 억제
 LR_ACTIVE_RATIO = 0.70
 
+# ==================================================
+# [수정] 몸통 흔들림 단일 이벤트 쿨다운
+# LR/FB 동시 감지 시 중복 카운트 방지.
+# 마지막 흔들림 이벤트 이후 이 시간(초)이 지나야 다음 이벤트로 카운트.
+# ==================================================
+BODY_SWAY_COOLDOWN_SEC = 0.5
+
 # 어깨 안정성 threshold
-SHOULDER_ANGLE_TOLERANCE  = 10.0
-SHOULDER_SMOOTHING_FRAMES = 7
-REQUIRED_TILT_FRAMES      = 5
-REQUIRED_STABLE_FRAMES    = 5
+SHOULDER_ANGLE_TOLERANCE    = 2.0   # 각도 기반: 기준 어깨각도에서 이 이상 벗어나면 불안정
+SHOULDER_POSITION_TOLERANCE = 0.035 # 위치 기반: 어깨 중심이 기준 위치에서 이 비율 이상 이탈
+SHOULDER_SMOOTHING_FRAMES   = 3     # 스무딩 줄여 짧은 이탈도 빠르게 반영
+REQUIRED_TILT_FRAMES        = 3     # 3프레임(~0.1초) 지속 시 불안정 확정
+REQUIRED_STABLE_FRAMES      = 3     # 3프레임 지속 시 안정 복귀
 
 # 고개 끄덕임 threshold
 DOWN_THRESHOLD          = 0.040
@@ -242,7 +249,10 @@ def get_pose_shoulder_metrics(pose_landmarks, width, height):
     center_x = float((left_px[0] + right_px[0]) / 2.0)
     center_y = float((left_px[1] + right_px[1]) / 2.0)
     width_px = float(np.linalg.norm(left_px - right_px))
-    angle    = calculate_shoulder_angle(left_px, right_px)
+    # MediaPipe에서 LEFT_SHOULDER는 화면 오른쪽, RIGHT_SHOULDER는 화면 왼쪽에 위치.
+    # 화면 왼쪽→오른쪽 방향(right_px→left_px)으로 계산해야 dx>0이 되어
+    # atan2가 ±180° 불연속 없이 0° 근처의 안정적인 값을 반환.
+    angle    = calculate_shoulder_angle(right_px, left_px)
 
     return {
         "left_shoulder":  left_px,
@@ -323,8 +333,9 @@ def get_frame_metrics(landmarks, width, height):
     r_left   = get_pixel_coords(landmarks[RIGHT_EYE_LEFT],   width, height)
     r_right  = get_pixel_coords(landmarks[RIGHT_EYE_RIGHT],  width, height)
 
-    nose    = get_pixel_coords(landmarks[NOSE_TIP],       width, height)
-    l_pupil = get_pixel_coords(landmarks[LEFT_EYE_PUPIL], width, height)
+    nose    = get_pixel_coords(landmarks[NOSE_TIP],        width, height)
+    l_pupil = get_pixel_coords(landmarks[LEFT_EYE_PUPIL],  width, height)
+    r_pupil = get_pixel_coords(landmarks[RIGHT_EYE_PUPIL], width, height)
 
     l_vert = calculate_distance(l_top, l_bottom)
     l_horz = calculate_distance(l_left, l_right)
@@ -354,7 +365,15 @@ def get_frame_metrics(landmarks, width, height):
         if l_eye_width > 0 else 0.5
     )
 
-    return ear, head_turn, head_tilt, gaze_ratio
+    # 수직 시선: 눈 세로 범위 내 동공의 위치 (0=위, 1=아래, 0.5=중앙)
+    # 눈이 거의 감긴 상태(모션블러·깜빡임)에서는 계산 불가능하므로 0.5로 고정
+    l_vert_range = l_bottom[1] - l_top[1]
+    r_vert_range = r_bottom[1] - r_top[1]
+    l_gaze_y = (l_pupil[1] - l_top[1]) / l_vert_range if l_vert_range > 3 else 0.5
+    r_gaze_y = (r_pupil[1] - r_top[1]) / r_vert_range if r_vert_range > 3 else 0.5
+    gaze_y_ratio = (l_gaze_y + r_gaze_y) / 2.0
+
+    return ear, head_turn, head_tilt, gaze_ratio, gaze_y_ratio
 
 
 # ==================================================
@@ -397,9 +416,6 @@ def get_smile_nod_features(landmarks, width, height):
 
 # ==================================================
 # 기존 Calibration
-# (시선, 눈깜빡임, 미소 기준값 — 별도 파일 유지)
-# 몸통/어깨/끄덕임은 analyze_behavior_video() 내부에서
-# 면접 영상 초반으로 baseline을 새로 잡습니다.
 # ==================================================
 
 def run_calibration(video_path):
@@ -415,6 +431,7 @@ def run_calibration(video_path):
     head_turn_list = []
     head_tilt_list = []
     gaze_list      = []
+    gaze_y_list    = []
     pitch_ratios   = []
     mouth_ratios   = []
     corner_raises  = []
@@ -432,13 +449,14 @@ def run_calibration(video_path):
             if result.face_landmarks:
                 landmarks = result.face_landmarks[0]
 
-                ear, head_turn, head_tilt, gaze_ratio = get_frame_metrics(
+                ear, head_turn, head_tilt, gaze_ratio, gaze_y_ratio = get_frame_metrics(
                     landmarks, width, height
                 )
                 ear_list.append(ear)
                 head_turn_list.append(head_turn)
                 head_tilt_list.append(head_tilt)
                 gaze_list.append(gaze_ratio)
+                gaze_y_list.append(gaze_y_ratio)
 
                 features = get_smile_nod_features(landmarks, width, height)
                 pitch_ratios.append(features["nose_pitch_ratio"])
@@ -456,15 +474,17 @@ def run_calibration(video_path):
     normal_ear     = sum(valid_ear_list) / len(valid_ear_list)
 
     return {
-        "ear_threshold":      float(normal_ear * 0.75),
-        "base_head_turn":     float(sum(head_turn_list) / len(head_turn_list)),
+        "ear_threshold":       float(normal_ear * 0.75),
+        "base_head_turn":      float(sum(head_turn_list) / len(head_turn_list)),
         "head_turn_tolerance": 0.07,
         "head_tilt_tolerance": float(sum(head_tilt_list) / len(head_tilt_list) + 12),
-        "base_gaze_ratio":    float(sum(gaze_list) / len(gaze_list)),
-        "gaze_tolerance":     0.05,
-        "base_pitch_ratio":   float(np.mean(pitch_ratios)),
-        "base_mouth_ratio":   float(np.mean(mouth_ratios)),
-        "base_corner_raise":  float(np.mean(corner_raises)),
+        "base_gaze_ratio":     float(sum(gaze_list) / len(gaze_list)),
+        "gaze_tolerance":      0.05,
+        "base_gaze_y_ratio":   float(np.mean(gaze_y_list)),
+        "gaze_y_tolerance":    0.15,
+        "base_pitch_ratio":    float(np.mean(pitch_ratios)),
+        "base_mouth_ratio":    float(np.mean(mouth_ratios)),
+        "base_corner_raise":   float(np.mean(corner_raises)),
     }
 
 
@@ -481,14 +501,6 @@ def compute_interview_baselines(
     height,
     duration_sec,
 ):
-    """
-    면접 영상 자체의 초반 구간으로 baseline을 계산합니다.
-    - body/shoulder: 기본 5초, 짧은 영상은 3초
-    - nod: 3초
-
-    [수정] 최소 프레임 기준을 fps * 3.0 으로 완화
-    기존 10프레임은 너무 엄격해서 정상 영상에서도 에러 발생 가능.
-    """
     body_shoulder_baseline_sec = (
         SHORT_VIDEO_BASELINE_SEC
         if duration_sec < SHORT_VIDEO_THRESHOLD
@@ -525,12 +537,10 @@ def compute_interview_baselines(
         face_result = face_landmarker.detect(mp_image)
         pose_result = pose_landmarker.detect(mp_image)
 
-        # ---- 얼굴 처리 ----
         if face_result.face_landmarks:
             face_landmarks = face_result.face_landmarks[0]
             face_detected_frames += 1
 
-            # nod baseline 수집
             if timestamp < nod_baseline_sec:
                 nod_feat = extract_nod_features(face_landmarks, width, height)
                 if (
@@ -539,13 +549,11 @@ def compute_interview_baselines(
                 ):
                     raw_nod_values.append(nod_feat["normalized_nose_y"])
 
-            # 얼굴 크기 (body sway FB 보조 신호)
             if timestamp < body_shoulder_baseline_sec:
                 face_size = get_face_size_from_landmarks(face_landmarks, width, height)
                 if face_size is not None:
                     face_size_list.append(face_size)
 
-        # ---- 포즈 처리 ----
         if pose_result.pose_landmarks and timestamp < body_shoulder_baseline_sec:
             pose_landmarks  = pose_result.pose_landmarks[0]
             shoulder_metrics = get_pose_shoulder_metrics(pose_landmarks, width, height)
@@ -557,10 +565,6 @@ def compute_interview_baselines(
                 shoulder_width_list.append(shoulder_metrics["shoulder_width"])
                 shoulder_angle_list.append(shoulder_metrics["shoulder_angle"])
 
-    # --------------------------------------------------
-    # [수정] 최소 프레임 기준: fps * 3.0 (최소 3초 분량)
-    # 기존 10프레임 고정값 → fps에 비례한 동적 기준으로 완화
-    # --------------------------------------------------
     min_required_frames = max(10, int(fps * 3.0))
 
     if len(shoulder_center_x_list) < min_required_frames:
@@ -575,7 +579,6 @@ def compute_interview_baselines(
             "면접 영상 초반 nod baseline 구간에서 얼굴을 감지하지 못했습니다."
         )
 
-    # nod baseline: 중앙값에서 크게 튀는 프레임 제외
     rough_nod_median = float(np.median(raw_nod_values))
     nod_values = [
         v for v in raw_nod_values
@@ -670,11 +673,13 @@ def analyze_behavior_video(video_path, config):
     local_peak_delta     = 0.0
     nod_smooth_buffer    = deque(maxlen=NOD_SMOOTHING_WINDOW)
     nod_velocity_buffer  = deque(maxlen=VELOCITY_WINDOW)
-    prev_smooth_nose_y   = None   # [수정] None이면 velocity 계산 스킵
+    prev_smooth_nose_y   = None
     last_count_video_sec = -999.0
 
     # ==================================================
-    # Body sway 상태 변수
+    # [수정] Body sway 상태 변수
+    # lr_sway_count / fb_sway_count 분리 제거.
+    # body_sway_count 단일 카운터 + 쿨다운으로 중복 방지.
     # ==================================================
     lr_ratio_buffer       = []
     fb_width_ratio_buffer = []
@@ -682,14 +687,14 @@ def analyze_behavior_video(video_path, config):
     fb_face_ratio_buffer  = []
 
     lr_state = "NEUTRAL"   # NEUTRAL / LEFT / RIGHT
-    fb_state = "NEUTRAL"   # NEUTRAL / FORWARD / BACKWARD  [수정: 6개→2개]
+    fb_state = "NEUTRAL"   # NEUTRAL / FORWARD / BACKWARD
 
-    lr_sway_count = 0
-    fb_sway_count = 0
+    body_sway_count          = 0           # [수정] 단일 통합 카운터
+    last_sway_timestamp      = -999.0      # [수정] 쿨다운 추적용
 
     body_direction_counts = {
-        "LR_LEFT":   0,
-        "LR_RIGHT":  0,
+        "LR_LEFT":    0,
+        "LR_RIGHT":   0,
         "FB_FORWARD":  0,
         "FB_BACKWARD": 0,
     }
@@ -728,9 +733,6 @@ def analyze_behavior_video(video_path, config):
     with _make_face_landmarker() as face_landmarker, \
          _make_pose_landmarker() as pose_landmarker:
 
-        # --------------------------------------------------
-        # 면접 영상 내부 baseline 계산
-        # --------------------------------------------------
         interview_baseline = compute_interview_baselines(
             cap=cap,
             face_landmarker=face_landmarker,
@@ -768,9 +770,6 @@ def analyze_behavior_video(video_path, config):
         print("nod baseline:", nod_baseline)
         print("=" * 50)
 
-        # --------------------------------------------------
-        # 분석 패스
-        # --------------------------------------------------
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         while cap.isOpened():
@@ -820,9 +819,7 @@ def analyze_behavior_video(video_path, config):
 
                 # 디버깅/검증용
                 "body_event":         "NONE",
-                "lr_sway_count":      lr_sway_count,
-                "fb_sway_count":      fb_sway_count,
-                "body_sway_count":    lr_sway_count + fb_sway_count,
+                "body_sway_count":    body_sway_count,
                 "shoulder_angle":     0.0,
                 "shoulder_angle_diff": 0.0,
             }
@@ -831,14 +828,15 @@ def analyze_behavior_video(video_path, config):
             if face_result.face_landmarks:
                 face_landmarks = face_result.face_landmarks[0]
 
-                ear, head_turn, head_tilt, gaze_ratio = get_frame_metrics(
+                ear, head_turn, head_tilt, gaze_ratio, gaze_y_ratio = get_frame_metrics(
                     face_landmarks, width, height
                 )
 
-                detail["ear_value"]  = float(ear)
-                detail["head_turn"]  = float(head_turn)
-                detail["head_tilt"]  = float(head_tilt)
-                detail["gaze_ratio"] = float(gaze_ratio)
+                detail["ear_value"]    = float(ear)
+                detail["head_turn"]    = float(head_turn)
+                detail["head_tilt"]    = float(head_tilt)
+                detail["gaze_ratio"]   = float(gaze_ratio)
+                detail["gaze_y_ratio"] = float(gaze_y_ratio)
 
                 # ==================================================
                 # Blink
@@ -852,12 +850,14 @@ def analyze_behavior_video(video_path, config):
                 # ==================================================
                 # Gaze
                 # ==================================================
-                is_head_turn_ok = abs(head_turn - config["base_head_turn"]) < config["head_turn_tolerance"]
-                is_head_tilt_ok = head_tilt < config["head_tilt_tolerance"]
-                is_iris_front   = abs(gaze_ratio - config["base_gaze_ratio"]) < config["gaze_tolerance"]
+                is_head_turn_ok  = abs(head_turn - config["base_head_turn"]) < config["head_turn_tolerance"]
+                is_head_tilt_ok  = head_tilt < config["head_tilt_tolerance"]
+                is_iris_front    = abs(gaze_ratio - config["base_gaze_ratio"]) < config["gaze_tolerance"]
+                is_iris_y_front  = abs(gaze_y_ratio - config.get("base_gaze_y_ratio", 0.5)) < config.get("gaze_y_tolerance", 0.15)
 
                 detail["gaze_direction"] = (
-                    "center" if (is_head_turn_ok and is_head_tilt_ok and is_iris_front)
+                    "center"
+                    if (is_head_turn_ok and is_head_tilt_ok and is_iris_front and is_iris_y_front)
                     else "deviated"
                 )
 
@@ -881,35 +881,21 @@ def analyze_behavior_video(video_path, config):
                 elif corner_delta > 0.008 and smooth_score > 0.005:
                     detail["is_smiling"] = True
                     smile_score_accumulator += 0.7
-                elif corner_delta > -0.01:
-                    detail["is_smiling"] = True
-                    smile_score_accumulator += 0.3
                 else:
                     detail["is_smiling"] = False
 
                 # ==================================================
                 # Nod
-                # baseline 구간은 카운트하지 않음
-                #
-                # [수정 1] baseline 구간에서는 prev_smooth_nose_y를 항상 None 유지
-                #   → baseline 마지막 프레임의 값이 분석 첫 프레임 velocity에
-                #     영향을 주는 것을 방지
-                #
-                # [수정 2] 얼굴 미감지 시 prev를 None으로 리셋
-                #   → 미감지 구간 이후 velocity 점프 방지
                 # ==================================================
-
                 nod_feat = extract_nod_features(face_landmarks, width, height)
 
                 if timestamp < nod_baseline_sec:
-                    # baseline 구간: 버퍼는 채우되 prev는 None 유지
-                    # → 분석 시작 첫 프레임에서 velocity가 0으로 시작됨
                     if (
                         nod_feat is not None
                         and nod_feat["normalized_nose_y"] is not None
                     ):
                         nod_smooth_buffer.append(nod_feat["normalized_nose_y"])
-                    prev_smooth_nose_y = None  # [수정 1]
+                    prev_smooth_nose_y = None
 
                 elif (
                     nod_feat is not None
@@ -924,7 +910,6 @@ def analyze_behavior_video(video_path, config):
                     nod_delta = smooth_nose_y - base_nose_y
                     detail["nod_delta"] = float(nod_delta)
 
-                    # velocity: prev가 None이면 계산 스킵 (점프 방지)
                     avg_velocity = 0.0
                     if prev_smooth_nose_y is not None:
                         velocity = smooth_nose_y - prev_smooth_nose_y
@@ -934,7 +919,6 @@ def analyze_behavior_video(video_path, config):
                                 sum(nod_velocity_buffer) / len(nod_velocity_buffer)
                             )
 
-                    # 상태 머신
                     if nod_state == "IDLE":
                         if USE_IGNORE_UP_FILTER and nod_delta < UP_IGNORE_THRESHOLD:
                             nod_state = "IGNORE_UP"
@@ -981,16 +965,14 @@ def analyze_behavior_video(video_path, config):
                         if abs(nod_delta) < BASELINE_RETURN_THRESHOLD:
                             nod_state = "IDLE"
 
-                    prev_smooth_nose_y = smooth_nose_y  # [수정 2] 감지된 프레임에서만 갱신
+                    prev_smooth_nose_y = smooth_nose_y
 
                 else:
-                    # 분석 구간에서 얼굴 미감지 or 얼굴 너무 작음
-                    prev_smooth_nose_y = None  # [수정 2] velocity 점프 방지
+                    prev_smooth_nose_y = None
 
             else:
-                # 얼굴 자체가 미감지
                 if timestamp >= nod_baseline_sec:
-                    prev_smooth_nose_y = None  # [수정 2]
+                    prev_smooth_nose_y = None
 
             # ==================================================
             # Pose 기반 몸통 흔들림 / 어깨 안정성
@@ -1051,21 +1033,32 @@ def analyze_behavior_video(video_path, config):
                     smooth_fb_y_ratio     = get_median(fb_y_ratio_buffer)
                     smooth_fb_face_ratio  = get_median(fb_face_ratio_buffer)
 
-                    # 좌우 상태 머신 (기존 그대로)
+                    fb_score = calculate_fb_score(
+                        smooth_fb_width_ratio,
+                        smooth_fb_y_ratio,
+                        smooth_fb_face_ratio,
+                    )
+
+                    lr_is_active = abs(smooth_lr_ratio) >= LR_SWAY_THRESHOLD * LR_ACTIVE_RATIO
+
+                    # --------------------------------------------------
+                    # [수정] 좌우 상태 머신 — 이벤트 감지만 담당
+                    # 실제 카운트는 아래 통합 쿨다운 블록에서 처리
+                    # --------------------------------------------------
+                    lr_triggered = False
+
                     if lr_state == "NEUTRAL":
                         if smooth_lr_ratio >= LR_SWAY_THRESHOLD:
-                            lr_sway_count += 1
                             lr_state = "RIGHT"
+                            lr_triggered = True
                             body_direction_counts["LR_RIGHT"] += 1
-                            body_event        = "LR_RIGHT_SWAY"
-                            is_body_sway_event = True
+                            body_event = "LR_RIGHT_SWAY"
 
                         elif smooth_lr_ratio <= -LR_SWAY_THRESHOLD:
-                            lr_sway_count += 1
                             lr_state = "LEFT"
+                            lr_triggered = True
                             body_direction_counts["LR_LEFT"] += 1
-                            body_event        = "LR_LEFT_SWAY"
-                            is_body_sway_event = True
+                            body_event = "LR_LEFT_SWAY"
 
                     elif lr_state == "RIGHT":
                         if abs(smooth_lr_ratio) <= LR_RETURN_THRESHOLD:
@@ -1076,47 +1069,46 @@ def analyze_behavior_video(video_path, config):
                             lr_state = "NEUTRAL"
 
                     # --------------------------------------------------
-                    # [수정] 앞뒤 흔들림 — OR 조건 → 가중합 점수 방식
-                    #
-                    # 변경 이유 1: 좌우 기울임 시 어깨 너비/y가 연동 변화해
-                    #   FB 오탐이 발생하던 문제 해결 (LR 억제)
-                    # 변경 이유 2: 세 신호 각각이 임계값 미달이어도
-                    #   합산하면 충분히 감지 가능 (민감도 개선)
+                    # [수정] 앞뒤 상태 머신 — 이벤트 감지만 담당
                     # --------------------------------------------------
-                    fb_score = calculate_fb_score(
-                        smooth_fb_width_ratio,
-                        smooth_fb_y_ratio,
-                        smooth_fb_face_ratio,
-                    )
-
-                    lr_is_active = abs(smooth_lr_ratio) >= LR_SWAY_THRESHOLD * LR_ACTIVE_RATIO
+                    fb_triggered = False
 
                     if fb_state == "NEUTRAL":
-                        # LR 활성 구간에서는 FB 판정 억제
                         if not lr_is_active:
                             if fb_score >= FB_SCORE_THRESHOLD:
-                                fb_sway_count += 1
                                 fb_state = "FORWARD"
+                                fb_triggered = True
                                 body_direction_counts["FB_FORWARD"] += 1
                                 body_event = (
                                     "FB_FORWARD" if body_event == "NONE"
                                     else body_event + "+FB_FORWARD"
                                 )
-                                is_body_sway_event = True
 
                             elif fb_score <= -FB_SCORE_THRESHOLD:
-                                fb_sway_count += 1
                                 fb_state = "BACKWARD"
+                                fb_triggered = True
                                 body_direction_counts["FB_BACKWARD"] += 1
                                 body_event = (
                                     "FB_BACKWARD" if body_event == "NONE"
                                     else body_event + "+FB_BACKWARD"
                                 )
-                                is_body_sway_event = True
 
                     elif fb_state in ["FORWARD", "BACKWARD"]:
                         if abs(fb_score) <= FB_SCORE_RETURN_THRESHOLD:
                             fb_state = "NEUTRAL"
+
+                    # --------------------------------------------------
+                    # [수정] 통합 쿨다운 카운터
+                    # LR/FB 중 하나라도 새 이벤트가 감지되면,
+                    # 쿨다운 이후일 때만 body_sway_count 1 증가.
+                    # 두 방향 동시 감지 → 여전히 1번만 카운트.
+                    # --------------------------------------------------
+                    if lr_triggered or fb_triggered:
+                        elapsed_since_sway = timestamp - last_sway_timestamp
+                        if elapsed_since_sway >= BODY_SWAY_COOLDOWN_SEC:
+                            body_sway_count     += 1
+                            last_sway_timestamp  = timestamp
+                            is_body_sway_event   = True
 
                 # --------------------------------------------------
                 # Shoulder stability — baseline 구간 제외
@@ -1129,7 +1121,15 @@ def analyze_behavior_video(video_path, config):
                         sum(shoulder_angle_history) / len(shoulder_angle_history)
                     )
                     shoulder_angle_diff = abs(smooth_shoulder_angle - base_shoulder_angle)
-                    raw_is_tilted = shoulder_angle_diff > SHOULDER_ANGLE_TOLERANCE
+                    angle_unstable = shoulder_angle_diff > SHOULDER_ANGLE_TOLERANCE
+
+                    # 위치 이탈: body sway 블록에서 이미 업데이트된 스무딩 값 재사용
+                    pos_unstable = (
+                        abs(smooth_lr_ratio) > SHOULDER_POSITION_TOLERANCE
+                        or abs(smooth_fb_y_ratio) > SHOULDER_POSITION_TOLERANCE
+                    )
+
+                    raw_is_tilted = angle_unstable or pos_unstable
 
                     if raw_is_tilted:
                         tilted_candidate_frames += 1
@@ -1166,11 +1166,9 @@ def analyze_behavior_video(video_path, config):
                 detail["shoulder_stable"]       = False
                 detail["shoulder_stable_frame"] = False
 
-            detail["is_swaying"]       = bool(is_body_sway_event)
-            detail["body_event"]       = body_event
-            detail["lr_sway_count"]    = int(lr_sway_count)
-            detail["fb_sway_count"]    = int(fb_sway_count)
-            detail["body_sway_count"]  = int(lr_sway_count + fb_sway_count)
+            detail["is_swaying"]      = bool(is_body_sway_event)
+            detail["body_event"]      = body_event
+            detail["body_sway_count"] = int(body_sway_count)
 
             if frame_idx % sample_interval == 0:
                 frame_details.append(detail)
@@ -1203,18 +1201,15 @@ def analyze_behavior_video(video_path, config):
         if shoulder_detected_frames > 0 else 0.0
     )
 
-    blinks_per_min    = blink_count   / duration_min if duration_min > 0 else 0.0
-    body_sway_count   = lr_sway_count + fb_sway_count
-    body_sway_per_min = body_sway_count / duration_min if duration_min > 0 else 0.0
-    nod_per_min       = nod_count       / duration_min if duration_min > 0 else 0.0
+    blinks_per_min    = blink_count      / duration_min if duration_min > 0 else 0.0
+    body_sway_per_min = body_sway_count  / duration_min if duration_min > 0 else 0.0
+    nod_per_min       = nod_count        / duration_min if duration_min > 0 else 0.0
 
     print("=" * 50)
     print("video:", video_path)
     print("fps:", fps)
     print("frame_idx:", frame_idx)
     print("duration_sec:", duration_sec)
-    print("lr_sway_count:", lr_sway_count)
-    print("fb_sway_count:", fb_sway_count)
     print("body_sway_count:", body_sway_count)
     print("body_sway_per_min(full duration):", body_sway_per_min)
     print("shoulder_stability_ratio:", shoulder_stability_ratio)
@@ -1231,9 +1226,7 @@ def analyze_behavior_video(video_path, config):
         "nod_count":           int(nod_count),
         "nod_per_min":         round(nod_per_min, 1),
 
-        # views.py 호환: shoulder_stability 키로 접근
         "shoulder_stability":       round(shoulder_stability_ratio, 1),
-        # model.py 연동용 별칭
         "shoulder_stability_ratio": round(shoulder_stability_ratio, 1),
 
         "shoulder_tilt_count":          int(tilt_count),
@@ -1242,17 +1235,13 @@ def analyze_behavior_video(video_path, config):
         "shoulder_detected_frames":     int(shoulder_detected_frames),
         "shoulder_not_detected_frames": int(shoulder_not_detected_frames),
 
-        "lr_sway_count":   int(lr_sway_count),
-        "fb_sway_count":   int(fb_sway_count),
-        "body_sway_count": int(body_sway_count),
-
-        # 방식 A: 전체 영상 길이 기준
+        # [수정] lr_sway_count / fb_sway_count 제거, body_sway_count 단일 필드만 유지
+        "body_sway_count":   int(body_sway_count),
         "body_sway_per_min": round(body_sway_per_min, 1),
 
         "total_smile_rate": round(total_smile_rate, 1),
         "duration_sec":     round(duration_sec, 2),
 
-        # 디버깅/검증용
         "interview_baseline":         interview_baseline,
         "body_sway_direction_counts": body_direction_counts,
     }

@@ -26,6 +26,8 @@ from .serializers import (
     CumulativeTrendsResponseSerializer,
 )
 
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".webm"}
+
 
 def _run_analysis(question_obj, full_video_path, interview_id, calibration_config, order):
     try:
@@ -128,9 +130,18 @@ def process_video_analysis(request, interview_id):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    ext = os.path.splitext(video_file.name)[1].lower()
+
+    if ext not in ALLOWED_VIDEO_EXTENSIONS:
+        return Response(
+            {
+                "error": f"지원하지 않는 파일 형식입니다. mp4 또는 webm 파일만 허용됩니다."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     order = int(question_order)
 
-    ext = os.path.splitext(video_file.name)[1]
     saved_file_name = default_storage.save(
         f"videos/intv_{interview_id}_{order}{ext}",
         ContentFile(video_file.read()),

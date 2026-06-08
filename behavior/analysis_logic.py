@@ -638,7 +638,7 @@ def analyze_behavior_video(video_path, config):
         raise RuntimeError(f"면접 영상을 열 수 없습니다: {video_path}")
 
     fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    if fps <= 1:
+    if not (1 < fps <= 240):
         fps = 30.0
 
     width       = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

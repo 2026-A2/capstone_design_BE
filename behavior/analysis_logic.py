@@ -5,6 +5,8 @@ from mediapipe.tasks.python import vision
 import numpy as np
 import math
 import os
+import subprocess
+import json
 import urllib.request
 from collections import deque
 
@@ -476,12 +478,12 @@ def run_calibration(video_path):
     return {
         "ear_threshold":       float(normal_ear * 0.75),
         "base_head_turn":      float(sum(head_turn_list) / len(head_turn_list)),
-        "head_turn_tolerance": 0.07,
-        "head_tilt_tolerance": float(sum(head_tilt_list) / len(head_tilt_list) + 12),
+        "head_turn_tolerance": 0.10,
+        "head_tilt_tolerance": float(sum(head_tilt_list) / len(head_tilt_list) + 15),
         "base_gaze_ratio":     float(sum(gaze_list) / len(gaze_list)),
-        "gaze_tolerance":      0.05,
+        "gaze_tolerance":      0.08,
         "base_gaze_y_ratio":   float(np.mean(gaze_y_list)),
-        "gaze_y_tolerance":    0.15,
+        "gaze_y_tolerance":    0.20,
         "base_pitch_ratio":    float(np.mean(pitch_ratios)),
         "base_mouth_ratio":    float(np.mean(mouth_ratios)),
         "base_corner_raise":   float(np.mean(corner_raises)),
@@ -501,14 +503,19 @@ def compute_interview_baselines(
     height,
     duration_sec,
 ):
+    # duration_sec가 None이면 메타데이터를 못 읽은 것(WebM 등) → 긴 영상으로 간주
     body_shoulder_baseline_sec = (
         SHORT_VIDEO_BASELINE_SEC
-        if duration_sec < SHORT_VIDEO_THRESHOLD
+        if duration_sec is not None and duration_sec < SHORT_VIDEO_THRESHOLD
         else BODY_SHOULDER_BASELINE_SEC
     )
     nod_baseline_sec = min(NOD_BASELINE_SEC, body_shoulder_baseline_sec)
-    max_baseline_sec = max(body_shoulder_baseline_sec, nod_baseline_sec)
-    max_frames       = max(1, int(fps * max_baseline_sec))
+
+    # 최소 요구 프레임: 0.5초분이면 안정적인 중앙값 계산 가능
+    MIN_SHOULDER_FRAMES = max(5, int(fps * 0.5))
+    MIN_NOD_FRAMES      = 3
+    # 초반 탐지 실패 시 최대 30초까지 탐색 확장
+    MAX_SEARCH_FRAMES   = int(fps * 30.0)
 
     shoulder_center_x_list = []
     shoulder_center_y_list = []
@@ -516,19 +523,20 @@ def compute_interview_baselines(
     shoulder_angle_list    = []
     face_size_list         = []
     raw_nod_values         = []
+    raw_corner_raises      = []
+    raw_mouth_ratios       = []
 
-    total_frames        = 0
+    total_frames         = 0
     pose_detected_frames = 0
     face_detected_frames = 0
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    while cap.isOpened() and total_frames < max_frames:
+    while cap.isOpened() and total_frames < MAX_SEARCH_FRAMES:
         ret, frame = cap.read()
         if not ret:
             break
 
-        timestamp    = total_frames / fps if fps > 0 else 0.0
         total_frames += 1
 
         rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -541,7 +549,8 @@ def compute_interview_baselines(
             face_landmarks = face_result.face_landmarks[0]
             face_detected_frames += 1
 
-            if timestamp < nod_baseline_sec:
+            # 필요한 만큼만 수집
+            if len(raw_nod_values) < int(fps * nod_baseline_sec) + 10:
                 nod_feat = extract_nod_features(face_landmarks, width, height)
                 if (
                     nod_feat is not None
@@ -549,13 +558,21 @@ def compute_interview_baselines(
                 ):
                     raw_nod_values.append(nod_feat["normalized_nose_y"])
 
-            if timestamp < body_shoulder_baseline_sec:
+            if len(face_size_list) < int(fps * body_shoulder_baseline_sec) + 10:
                 face_size = get_face_size_from_landmarks(face_landmarks, width, height)
                 if face_size is not None:
                     face_size_list.append(face_size)
 
-        if pose_result.pose_landmarks and timestamp < body_shoulder_baseline_sec:
-            pose_landmarks  = pose_result.pose_landmarks[0]
+            if len(raw_corner_raises) < int(fps * nod_baseline_sec) + 10:
+                smile_feat = get_smile_nod_features(face_landmarks, width, height)
+                raw_corner_raises.append(smile_feat["corner_raise"])
+                raw_mouth_ratios.append(smile_feat["mouth_ratio"])
+
+        if (
+            pose_result.pose_landmarks
+            and len(shoulder_center_x_list) < int(fps * body_shoulder_baseline_sec) + 10
+        ):
+            pose_landmarks   = pose_result.pose_landmarks[0]
             shoulder_metrics = get_pose_shoulder_metrics(pose_landmarks, width, height)
 
             if shoulder_metrics is not None:
@@ -565,55 +582,65 @@ def compute_interview_baselines(
                 shoulder_width_list.append(shoulder_metrics["shoulder_width"])
                 shoulder_angle_list.append(shoulder_metrics["shoulder_angle"])
 
-    min_required_frames = max(10, int(fps * 3.0))
+        # 충분한 baseline 확보 시 조기 종료
+        if (
+            len(shoulder_center_x_list) >= MIN_SHOULDER_FRAMES
+            and len(raw_nod_values) >= MIN_NOD_FRAMES
+        ):
+            break
 
-    if len(shoulder_center_x_list) < min_required_frames:
-        raise RuntimeError(
-            f"baseline 구간 어깨 감지 프레임 부족: "
-            f"{len(shoulder_center_x_list)}프레임 감지 / 최소 {min_required_frames}프레임 필요. "
-            f"영상 초반 {body_shoulder_baseline_sec:.0f}초 동안 어깨가 잘 보이는지 확인하세요."
-        )
-
-    if not raw_nod_values:
-        raise RuntimeError(
-            "면접 영상 초반 nod baseline 구간에서 얼굴을 감지하지 못했습니다."
-        )
-
-    rough_nod_median = float(np.median(raw_nod_values))
-    nod_values = [
-        v for v in raw_nod_values
-        if abs(v - rough_nod_median) < CALIB_REJECT_THRESHOLD
-    ]
-    if not nod_values:
-        nod_values = raw_nod_values
-
-    baseline = {
-        "body_shoulder_baseline_sec": float(body_shoulder_baseline_sec),
-        "nod_baseline_sec":           float(nod_baseline_sec),
-
-        "body": {
+    # body/shoulder baseline — 어깨 감지 불충분 시 None
+    body_baseline     = None
+    shoulder_baseline = None
+    if len(shoulder_center_x_list) >= MIN_SHOULDER_FRAMES:
+        body_baseline = {
             "center_x":       float(np.median(shoulder_center_x_list)),
             "center_y":       float(np.median(shoulder_center_y_list)),
             "shoulder_width": float(np.median(shoulder_width_list)),
             "face_size":      float(np.median(face_size_list)) if face_size_list else None,
-        },
-
-        "shoulder": {
+        }
+        shoulder_baseline = {
             "base_shoulder_angle":      float(np.mean(shoulder_angle_list)),
             "base_shoulder_width":      float(np.median(shoulder_width_list)),
             "shoulder_angle_tolerance": float(SHOULDER_ANGLE_TOLERANCE),
             "calibration_angle_std":    float(np.std(shoulder_angle_list)),
             "calibration_unstable":     bool(np.std(shoulder_angle_list) > 4.0),
-        },
+        }
 
-        "nod": {
+    # nod baseline — 얼굴 감지 불충분 시 None
+    nod_baseline = None
+    if len(raw_nod_values) >= MIN_NOD_FRAMES:
+        rough_nod_median = float(np.median(raw_nod_values))
+        nod_values = [
+            v for v in raw_nod_values
+            if abs(v - rough_nod_median) < CALIB_REJECT_THRESHOLD
+        ]
+        if not nod_values:
+            nod_values = raw_nod_values
+        nod_baseline = {
             "base_nose_y":           float(np.mean(nod_values)),
             "calibration_pitch_std": float(np.std(nod_values)),
             "calibration_unstable":  bool(np.std(nod_values) > 0.025),
             "used_frames":           int(len(nod_values)),
             "raw_frames":            int(len(raw_nod_values)),
-        },
+        }
 
+    # smile baseline — 면접 영상 초반 3초 기준으로 고개 위치 보정
+    # 캘리브레이션(중앙)과 면접(우측) 화면 배치 차이로 인한 고개 각도 오프셋 흡수
+    smile_baseline = None
+    if len(raw_corner_raises) >= MIN_NOD_FRAMES:
+        smile_baseline = {
+            "base_corner_raise": float(np.median(raw_corner_raises)),
+            "base_mouth_ratio":  float(np.median(raw_mouth_ratios)),
+        }
+
+    return {
+        "body_shoulder_baseline_sec": float(body_shoulder_baseline_sec),
+        "nod_baseline_sec":           float(nod_baseline_sec),
+        "body":     body_baseline,
+        "shoulder": shoulder_baseline,
+        "nod":      nod_baseline,
+        "smile":    smile_baseline,
         "quality": {
             "baseline_total_frames":  int(total_frames),
             "pose_detected_frames":   int(pose_detected_frames),
@@ -623,8 +650,106 @@ def compute_interview_baselines(
         },
     }
 
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    return baseline
+
+# ==================================================
+# ffprobe 기반 영상 정보 조회 (WebM 등 컨테이너 메타 오류 대응)
+# ==================================================
+
+def _get_video_info_ffprobe(video_path: str):
+    """
+    ffprobe로 실제 FPS와 영상 길이를 읽는다.
+    Chrome WebM은 r_frame_rate / CAP_PROP_FPS 가 TrackEntry DefaultDuration 기반으로
+    실제 값의 2배로 잘못 기록되는 버그가 있어, 실제 패킷 PTS 타임스탬프에서 FPS를 계산.
+    실패 시 (None, None) 반환.
+    """
+    fps = None
+    duration = None
+
+    try:
+        # 1. 컨테이너(format) 레벨 duration 조회
+        #    Chrome WebM은 Segment Info에 올바른 duration을 기록함
+        fmt_result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_format", video_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        fmt_data = json.loads(fmt_result.stdout)
+        duration = float(fmt_data.get("format", {}).get("duration") or 0) or None
+    except Exception:
+        pass
+
+    try:
+        # 2. 실제 패킷 PTS 타임스탬프로 FPS 계산
+        #    r_frame_rate는 DefaultDuration 기반(부정확)이므로 사용하지 않음
+        #    실제 Block timestamp를 읽어 프레임 간격의 중앙값으로 FPS 계산
+        pts_result = subprocess.run(
+            [
+                "ffprobe", "-v", "quiet",
+                "-select_streams", "v:0",
+                "-show_entries", "packet=pts_time",
+                "-read_intervals", "%+5",   # 처음 5초 분량 패킷만 읽음
+                "-of", "csv=p=0",
+                video_path,
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        timestamps = [
+            float(t) for t in pts_result.stdout.strip().split("\n")
+            if t.strip() and t.strip() != "N/A"
+        ]
+        if len(timestamps) >= 10:
+            intervals = [
+                timestamps[i + 1] - timestamps[i]
+                for i in range(len(timestamps) - 1)
+                if timestamps[i + 1] > timestamps[i]
+            ]
+            if intervals:
+                median_interval = float(np.median(intervals))
+                if median_interval > 0:
+                    measured = 1.0 / median_interval
+                    if 1.0 < measured < 200.0:
+                        fps = measured
+    except Exception:
+        pass
+
+    return fps, duration
+
+
+# ==================================================
+# FPS 측정
+# ==================================================
+
+def _measure_actual_fps(cap, sample_frames: int = 60):
+    """
+    POS_MSEC으로 실제 프레임 간격을 측정해 FPS 반환.
+    측정 불가 시 None 반환. 호출 후 cap은 소비된 상태 → 재오픈 필요.
+    """
+    timestamps_ms = []
+    for _ in range(sample_frames + 1):
+        ts = cap.get(cv2.CAP_PROP_POS_MSEC)
+        ret, _ = cap.read()
+        if not ret:
+            break
+        if ts >= 0:
+            timestamps_ms.append(ts)
+
+    if len(timestamps_ms) < 10:
+        return None
+
+    intervals = [
+        timestamps_ms[i + 1] - timestamps_ms[i]
+        for i in range(len(timestamps_ms) - 1)
+        if timestamps_ms[i + 1] > timestamps_ms[i]
+    ]
+    if not intervals:
+        return None
+
+    median_ms = float(np.median(intervals))
+    if median_ms <= 0:
+        return None
+
+    measured = 1000.0 / median_ms
+    return measured if 1.0 < measured < 200.0 else None
 
 
 # ==================================================
@@ -637,17 +762,30 @@ def analyze_behavior_video(video_path, config):
     if not cap.isOpened():
         raise RuntimeError(f"면접 영상을 열 수 없습니다: {video_path}")
 
-    fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    if not (1 < fps <= 240):
-        fps = 30.0
+    raw_fps = cap.get(cv2.CAP_PROP_FPS)
+
+    # ffprobe로 실제 FPS와 영상 길이 우선 조회
+    # (Chrome WebM은 OpenCV가 FPS를 2배 오독하는 버그가 있어 ffprobe를 우선 신뢰)
+    ffprobe_fps, ffprobe_duration = _get_video_info_ffprobe(video_path)
+
+    if ffprobe_fps:
+        fps = ffprobe_fps
+    elif raw_fps and 1.0 < raw_fps <= 120.0:
+        fps = raw_fps
+    else:
+        measured = _measure_actual_fps(cap)
+        cap.release()
+        cap = cv2.VideoCapture(video_path)
+        fps = measured if measured else 30.0
 
     width       = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height      = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+    # ffprobe duration 우선 사용; 없으면 메타데이터 frame_count/fps, 그것도 없으면 None
     duration_sec_by_meta = (
-        frame_count / fps
-        if fps > 0 and frame_count > 0 else 0.0
+        ffprobe_duration
+        or (frame_count / fps if fps > 0 and frame_count > 0 else None)
     )
 
     frame_details = []
@@ -743,26 +881,44 @@ def analyze_behavior_video(video_path, config):
             duration_sec=duration_sec_by_meta,
         )
 
-        body_baseline    = interview_baseline["body"]
+        body_baseline     = interview_baseline["body"]
         shoulder_baseline = interview_baseline["shoulder"]
-        nod_baseline     = interview_baseline["nod"]
+        nod_baseline      = interview_baseline["nod"]
+        smile_baseline    = interview_baseline["smile"]
 
         body_shoulder_baseline_sec = interview_baseline["body_shoulder_baseline_sec"]
         nod_baseline_sec           = interview_baseline["nod_baseline_sec"]
 
-        base_sw      = body_baseline["shoulder_width"]
-        base_fs      = body_baseline["face_size"]
-        base_nose_y  = nod_baseline["base_nose_y"]
-        base_shoulder_angle = shoulder_baseline["base_shoulder_angle"]
+        # baseline 가용 여부 — None이면 해당 지표는 0으로 처리
+        can_analyze_body = body_baseline is not None
+        can_analyze_nod  = nod_baseline  is not None
 
-        if base_sw < 1:
-            raise RuntimeError("면접 영상 초반 baseline의 어깨 너비가 너무 작습니다.")
+        if can_analyze_body:
+            base_sw             = body_baseline["shoulder_width"]
+            base_fs             = body_baseline["face_size"]
+            base_shoulder_angle = shoulder_baseline["base_shoulder_angle"]
+            if base_sw < 1:
+                can_analyze_body = False
+        else:
+            base_sw = base_fs = base_shoulder_angle = None
+
+        base_nose_y = nod_baseline["base_nose_y"] if can_analyze_nod else None
+
+        # smile 기준: 면접 영상 초반 baseline 우선, 없으면 캘리브레이션 fallback
+        base_corner_raise = (
+            smile_baseline["base_corner_raise"]
+            if smile_baseline else config.get("base_corner_raise", 0.0)
+        )
+        base_mouth_ratio = (
+            smile_baseline["base_mouth_ratio"]
+            if smile_baseline else config.get("base_mouth_ratio", 1.0)
+        )
 
         print("=" * 50)
         print("interview baseline")
         print("video:", video_path)
-        print("fps:", fps)
-        print("duration_sec(meta):", duration_sec_by_meta)
+        print("fps:", fps, f"(raw: {raw_fps}, ffprobe: {ffprobe_fps})")
+        print("duration_sec(ffprobe):", ffprobe_duration, "/ (meta):", duration_sec_by_meta)
         print("body/shoulder baseline sec:", body_shoulder_baseline_sec)
         print("nod baseline sec:", nod_baseline_sec)
         print("body baseline:", body_baseline)
@@ -770,17 +926,19 @@ def analyze_behavior_video(video_path, config):
         print("nod baseline:", nod_baseline)
         print("=" * 50)
 
-        # --------------------------------------------------
-        # 분석 패스
-        # --------------------------------------------------
-        # webm 파일은 seek이 지원되지 않으므로 cap을 재오픈
+        # webm(VP9) 파일은 seek가 동작하지 않아 재오픈
         cap.release()
         cap = cv2.VideoCapture(video_path)
 
+        last_frame_ts_ms = 0.0
+
         while cap.isOpened():
+            frame_ts_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
             ret, frame = cap.read()
             if not ret:
                 break
+            if frame_ts_ms > 0:
+                last_frame_ts_ms = frame_ts_ms
 
             timestamp = frame_idx / fps if fps > 0 else 0.0
 
@@ -872,18 +1030,18 @@ def analyze_behavior_video(video_path, config):
                 features = get_smile_nod_features(face_landmarks, width, height)
                 analyzed_face_frame_count += 1
 
-                ratio_delta  = features["mouth_ratio"]  - config["base_mouth_ratio"]
-                corner_delta = features["corner_raise"] - config["base_corner_raise"]
+                ratio_delta  = features["mouth_ratio"]  - base_mouth_ratio
+                corner_delta = features["corner_raise"] - base_corner_raise
                 smile_score  = ratio_delta * 0.1 + corner_delta * 0.9
 
                 score_buffer.append(smile_score)
                 smooth_score = float(np.mean(score_buffer))
                 detail["smile_ratio"] = float(max(0.0, smooth_score))
 
-                if corner_delta > 0.025 and smooth_score > 0.018:
+                if corner_delta > 0.030 and smooth_score > 0.022:
                     detail["is_smiling"] = True
                     smile_score_accumulator += 1.0
-                elif corner_delta > 0.008 and smooth_score > 0.005:
+                elif corner_delta > 0.015 and smooth_score > 0.010:
                     detail["is_smiling"] = True
                     smile_score_accumulator += 0.7
                 else:
@@ -892,9 +1050,12 @@ def analyze_behavior_video(video_path, config):
                 # ==================================================
                 # Nod
                 # ==================================================
-                nod_feat = extract_nod_features(face_landmarks, width, height)
+                nod_feat = (
+                    extract_nod_features(face_landmarks, width, height)
+                    if can_analyze_nod else None
+                )
 
-                if timestamp < nod_baseline_sec:
+                if can_analyze_nod and timestamp < nod_baseline_sec:
                     if (
                         nod_feat is not None
                         and nod_feat["normalized_nose_y"] is not None
@@ -976,7 +1137,7 @@ def analyze_behavior_video(video_path, config):
                     prev_smooth_nose_y = None
 
             else:
-                if timestamp >= nod_baseline_sec:
+                if can_analyze_nod and timestamp >= nod_baseline_sec:
                     prev_smooth_nose_y = None
 
             # ==================================================
@@ -1004,9 +1165,12 @@ def analyze_behavior_video(video_path, config):
                 detail["shoulder_width"] = float(shoulder_width_value)
 
                 # --------------------------------------------------
-                # Body sway — baseline 구간은 카운트 제외
+                # Body sway — baseline 없으면 스킵
                 # --------------------------------------------------
-                if timestamp >= body_shoulder_baseline_sec:
+                smooth_lr_ratio   = 0.0
+                smooth_fb_y_ratio = 0.0
+
+                if can_analyze_body and timestamp >= body_shoulder_baseline_sec:
                     current_lr_ratio = (
                         shoulder_center_x - body_baseline["center_x"]
                     ) / base_sw
@@ -1046,10 +1210,6 @@ def analyze_behavior_video(video_path, config):
 
                     lr_is_active = abs(smooth_lr_ratio) >= LR_SWAY_THRESHOLD * LR_ACTIVE_RATIO
 
-                    # --------------------------------------------------
-                    # [수정] 좌우 상태 머신 — 이벤트 감지만 담당
-                    # 실제 카운트는 아래 통합 쿨다운 블록에서 처리
-                    # --------------------------------------------------
                     lr_triggered = False
 
                     if lr_state == "NEUTRAL":
@@ -1073,9 +1233,6 @@ def analyze_behavior_video(video_path, config):
                         if abs(smooth_lr_ratio) <= LR_RETURN_THRESHOLD:
                             lr_state = "NEUTRAL"
 
-                    # --------------------------------------------------
-                    # [수정] 앞뒤 상태 머신 — 이벤트 감지만 담당
-                    # --------------------------------------------------
                     fb_triggered = False
 
                     if fb_state == "NEUTRAL":
@@ -1102,12 +1259,6 @@ def analyze_behavior_video(video_path, config):
                         if abs(fb_score) <= FB_SCORE_RETURN_THRESHOLD:
                             fb_state = "NEUTRAL"
 
-                    # --------------------------------------------------
-                    # [수정] 통합 쿨다운 카운터
-                    # LR/FB 중 하나라도 새 이벤트가 감지되면,
-                    # 쿨다운 이후일 때만 body_sway_count 1 증가.
-                    # 두 방향 동시 감지 → 여전히 1번만 카운트.
-                    # --------------------------------------------------
                     if lr_triggered or fb_triggered:
                         elapsed_since_sway = timestamp - last_sway_timestamp
                         if elapsed_since_sway >= BODY_SWAY_COOLDOWN_SEC:
@@ -1116,9 +1267,9 @@ def analyze_behavior_video(video_path, config):
                             is_body_sway_event   = True
 
                 # --------------------------------------------------
-                # Shoulder stability — baseline 구간 제외
+                # Shoulder stability — baseline 없으면 스킵
                 # --------------------------------------------------
-                if timestamp >= body_shoulder_baseline_sec:
+                if can_analyze_body and timestamp >= body_shoulder_baseline_sec:
                     shoulder_detected_frames += 1
 
                     shoulder_angle_history.append(current_shoulder_angle)
@@ -1128,7 +1279,6 @@ def analyze_behavior_video(video_path, config):
                     shoulder_angle_diff = abs(smooth_shoulder_angle - base_shoulder_angle)
                     angle_unstable = shoulder_angle_diff > SHOULDER_ANGLE_TOLERANCE
 
-                    # 위치 이탈: body sway 블록에서 이미 업데이트된 스무딩 값 재사용
                     pos_unstable = (
                         abs(smooth_lr_ratio) > SHOULDER_POSITION_TOLERANCE
                         or abs(smooth_fb_y_ratio) > SHOULDER_POSITION_TOLERANCE
@@ -1184,9 +1334,14 @@ def analyze_behavior_video(video_path, config):
 
     total_sampled_frames = len(frame_details)
 
-    duration_sec = (
-        frame_idx / fps if fps > 0 else duration_sec_by_meta
-    )
+    # ffprobe duration 우선 사용 (가장 정확)
+    # 없으면 frame_idx / fps로 추정
+    if ffprobe_duration:
+        duration_sec = ffprobe_duration
+    elif fps > 0:
+        duration_sec = frame_idx / fps
+    else:
+        duration_sec = 0.0
     duration_min = duration_sec / 60 if duration_sec > 0 else 1.0
 
     focus_rate = (
@@ -1215,6 +1370,9 @@ def analyze_behavior_video(video_path, config):
     print("fps:", fps)
     print("frame_idx:", frame_idx)
     print("duration_sec:", duration_sec)
+    print("focus_rate:", round(focus_rate, 1), "%")
+    print("blink_count:", blink_count, f"({round(blinks_per_min, 1)}/min)")
+    print("total_smile_rate:", round(total_smile_rate, 1), "%")
     print("body_sway_count:", body_sway_count)
     print("body_sway_per_min(full duration):", body_sway_per_min)
     print("shoulder_stability_ratio:", shoulder_stability_ratio)

@@ -1,12 +1,37 @@
-import whisper
+import threading
+from faster_whisper import WhisperModel
+
+_model = None
+_model_lock = threading.Lock()
+
+
+def _get_model() -> WhisperModel:
+    global _model
+    with _model_lock:
+        if _model is None:
+            print("Loading faster-whisper large-v3-turbo model...")
+            _model = WhisperModel("large-v3-turbo", device="cpu", compute_type="int8")
+    return _model
 
 
 def count_syllables(text: str) -> int:
     return sum(1 for ch in text if '가' <= ch <= '힣')
 
 
-def transcribe(audio_path: str, model) -> dict:
-    return model.transcribe(audio_path, language="ko", word_timestamps=True)
+def _segments_to_dict(segments) -> list:
+    """faster-whisper Segment 객체를 dict 형식으로 변환 (volume.py, filler.py 호환)"""
+    result = []
+    for seg in segments:
+        result.append({
+            "start": seg.start,
+            "end": seg.end,
+            "text": seg.text,
+            "words": [
+                {"start": w.start, "end": w.end, "word": w.word}
+                for w in (seg.words or [])
+            ],
+        })
+    return result
 
 
 def detect_silences(segments: list, threshold: float = 3.0) -> list:
@@ -50,19 +75,24 @@ def calculate_speech_rate(transcript: str, duration_sec: float) -> dict:
 
 
 def analyze(audio_path: str, **kwargs) -> dict:
-    print("Loading Whisper small model...")
-    model = whisper.load_model("small")
+    model = _get_model()
 
-    result = transcribe(audio_path, model)
-    transcript = result["text"].strip()
-    duration_sec = result["segments"][-1]["end"] if result["segments"] else 0
+    segments_gen, info = model.transcribe(
+        audio_path,
+        language="ko",
+        word_timestamps=True,
+    )
+    segments = _segments_to_dict(segments_gen)
+
+    transcript = " ".join(seg["text"].strip() for seg in segments)
+    duration_sec = info.duration
 
     rate_info = calculate_speech_rate(transcript, duration_sec)
-    silences = detect_silences(result["segments"])
+    silences = detect_silences(segments)
 
     return {
         "transcript": transcript,
         "silences": silences,
-        "segments": result["segments"],
+        "segments": segments,
         **rate_info,
     }

@@ -14,10 +14,43 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+
 from django.contrib import admin
 from django.urls import path, include
+from interview import views as interview_views
+from drf_spectacular.views import (SpectacularAPIView, SpectacularJSONAPIView, SpectacularYAMLAPIView, SpectacularSwaggerView, SpectacularRedocView)
+from django.conf import settings
+from django.conf.urls.static import static
+
+
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include('api.urls')),
+    path('', include('speech.urls')),
+
+    path("json/", SpectacularJSONAPIView.as_view(), name="schema-json"),
+    path("yaml/", SpectacularYAMLAPIView.as_view(), name="swagger-yaml"),
+    path("swagger/", SpectacularSwaggerView.as_view(url_name="schema-json"), name="swagger-ui"),
+    path("redoc/", SpectacularRedocView.as_view(url_name="schema-json"), name="redoc"),
+
+    path('interviews/', include('interview.urls')),
+
+   # [6] 자소서 저장
+    path('resumes/create/', interview_views.create_resume, name='create_resume'),
+
+    # [7] 저장된 자소서 목록 조회
+    path('resumes/', interview_views.get_resume_list, name='get_resume_list'),
+
+    # [8] 자소서 상세 조회
+    path('resumes/<int:resume_id>/', interview_views.get_resume_detail, name='get_resume_detail'),
+
+    # [9] 자소서 수정
+    path('resumes/<int:resume_id>/update/', interview_views.update_resume, name='update_resume'),
+
+    # [10] 자소서 삭제
+    path('resumes/<int:resume_id>/delete/', interview_views.delete_resume, name='delete_resume'),
 ]
+
+# 미디어 파일(영상 등) 접근 설정
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

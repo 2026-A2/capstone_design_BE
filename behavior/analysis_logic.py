@@ -167,6 +167,9 @@ BASELINE_RETURN_THRESHOLD = 0.015
 # 캘리브레이션 구간에서 중앙값 대비 이 이상 벗어난 프레임 제외
 CALIB_REJECT_THRESHOLD = 0.020
 
+# 눈깜빡임 쿨다운 (생리학적 최소 깜빡임 간격 ~150ms)
+BLINK_COOLDOWN_SEC = 0.15
+
 
 # ==================================================
 # Utility
@@ -790,8 +793,9 @@ def analyze_behavior_video(video_path, config):
 
     frame_details = []
 
-    blink_count       = 0
+    blink_count        = 0
     is_eye_closed_prev = False
+    last_blink_timestamp = -999.0
 
     sample_interval = max(1, int(fps / 5))
     frame_idx       = 0
@@ -1006,8 +1010,10 @@ def analyze_behavior_video(video_path, config):
                 # ==================================================
                 is_closed = ear < config["ear_threshold"]
                 if is_eye_closed_prev and not is_closed:
-                    blink_count   += 1
-                    detail["is_blink"] = True
+                    if timestamp - last_blink_timestamp >= BLINK_COOLDOWN_SEC:
+                        blink_count += 1
+                        detail["is_blink"] = True
+                        last_blink_timestamp = timestamp
                 is_eye_closed_prev = is_closed
 
                 # ==================================================
